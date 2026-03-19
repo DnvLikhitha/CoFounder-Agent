@@ -1,0 +1,94 @@
+AI Startup Co-Founder Agent — Task Checklist
+Phase 0: Planning & DB Setup
+ Read and understand the full PRD
+ Write implementation plan and get user approval
+ Create Supabase project (ajsgqbabeleutbobyfyq)
+ Apply DB schema migrations (profiles, runs, agent_outputs, exports)
+ Enable RLS policies on all tables
+ Get Supabase URL and anon key
+
+Phase 1: Backend Foundation ✅
+ Create project directory structure
+ Create 
+backend/requirements.txt
+ Create 
+backend/.env
+ with real API keys
+ Create 
+backend/config.py
+ — Pydantic settings
+ Create 
+backend/context.py
+ — RunContext dataclass
+ Create 
+backend/agents/base.py
+ — BaseAgent ABC with retry/SSE
+ Create 
+backend/llm/client.py
+ — Groq async wrapper
+ Create 
+backend/db/models.py
+ — SQLAlchemy models
+ Create 
+backend/db/session.py
+ — Supabase client helpers
+ Create 
+backend/main.py
+ — FastAPI app entry
+
+Phase 2: All 16 Agents ✅
+ Agent 0: Problem Refiner
+ Agent 1: Startup Idea Generator
+ Agent 2: Market Research Analyst
+ Agent 3: Competitor Intelligence
+ Agent 4: Customer Persona Builder
+ Agent 5: Product Designer
+ Agent 6: MVP Roadmap Planner (parallel)
+ Agent 7: Business Model Strategist (parallel)
+ Agent 8: Pricing Strategist (parallel)
+ Agent 9: Financial Projection Analyst (parallel)
+ Agent 10: Risk Analyst (parallel)
+ Agent 11: Tech Architecture Designer
+ Agent 12: Database Schema Designer
+ Agent 13: Security & Compliance Advisor
+ Agent 14: Pitch Deck Writer (parallel)
+ Agent 15: Executive Summary Writer (parallel)
+
+Phase 3: Orchestrator & API ✅
+ Create 
+backend/orchestrator.py
+ — 4-phase hybrid pipeline
+ Create 
+backend/api/routes/run.py
+ — POST /api/run
+ Create 
+backend/api/routes/stream.py
+ — SSE stream endpoint
+ Create 
+backend/api/routes/export.py
+ — PDF/MD export
+ Create 
+backend/export/pdf_generator.py
+ — ReportLab dark-themed PDF
+ Create 
+backend/export/markdown_writer.py
+ — comprehensive MD doc
+
+Phase 4: Next.js Frontend
+ Initialize Next.js 14 app (App Router + Tailwind)
+ Install shadcn/ui + zustand + dependencies
+ Create app/globals.css — dark premium design system
+ Create app/page.tsx — Landing + InputForm
+ Create app/run/[id]/page.tsx — Live pipeline view
+ Create app/history/page.tsx — Past sessions
+ Create components/AgentProgressTracker.tsx
+ Create components/OutputSection.tsx
+ Create lib/api.ts — API client
+ Create lib/store.ts — Zustand store
+ 
+Phase 5: Verification
+ Test backend server starts without errors
+ Test a single-agent run end-to-end
+ Test SSE stream endpoint
+ Test frontend renders correctly
+ Verify DB schema in Supabase
