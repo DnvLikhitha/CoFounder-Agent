@@ -134,3 +134,69 @@ async def delete_run(run_id: str):
         client.table("runs").delete().eq("id", run_id).execute()
     except Exception as e:
         logger.error(f"Failed to delete run {run_id}: {e}")
+
+
+# Map agent_name -> RunContext field name for building context from DB
+AGENT_TO_CONTEXT_FIELD = {
+    "Agent0_Refiner": "problem_refined",
+    "Agent1_IdeaGenerator": "startup_idea",
+    "Agent2_MarketResearch": "market_research",
+    "Agent3_Competitors": "competitor_analysis",
+    "Agent4_Personas": "customer_personas",
+    "Agent5_ProductDesigner": "product_design",
+    "Agent6_MVPRoadmap": "mvp_roadmap",
+    "Agent7_BusinessModel": "business_model",
+    "Agent8_Pricing": "pricing_strategy",
+    "Agent9_Financials": "financial_projections",
+    "Agent10_RiskAnalyst": "risk_register",
+    "Agent11_TechArchitecture": "tech_architecture",
+    "Agent12_DatabaseSchema": "database_schema",
+    "Agent13_Security": "security_compliance",
+    "Agent14_PitchDeck": "pitch_deck",
+    "Agent15_ExecutiveSummary": "executive_summary",
+}
+
+
+async def build_context_from_db(run_id: str) -> "RunContext | None":
+    """Build a RunContext from database when not in active_runs (e.g. after refresh)."""
+    from backend.context import RunContext
+    from datetime import datetime
+
+    run = await get_run(run_id)
+    if not run:
+        return None
+    outputs = await get_agent_outputs(run_id)
+
+    ctx = RunContext(
+        run_id=run_id,
+        problem_raw=run.get("problem_raw", ""),
+        domain=run.get("domain"),
+        geography=run.get("geography"),
+    )
+    ctx.status = run.get("agent_statuses") or {}
+    try:
+        if run.get("created_at"):
+            ts = str(run["created_at"]).replace("Z", "+00:00")
+            ctx.created_at = datetime.fromisoformat(ts)
+    except Exception:
+        pass
+    try:
+        if run.get("completed_at"):
+            ts = str(run["completed_at"]).replace("Z", "+00:00")
+            ctx.completed_at = datetime.fromisoformat(ts)
+    except Exception:
+        pass
+
+    for out in outputs:
+        agent_name = out.get("agent_name")
+        output_data = out.get("output_data") or {}
+        field_name = AGENT_TO_CONTEXT_FIELD.get(agent_name)
+        if field_name:
+            if agent_name == "Agent0_Refiner":
+                ctx.problem_refined = output_data.get("problem_refined", ctx.problem_raw)
+            else:
+                setattr(ctx, field_name, output_data)
+        if agent_name:
+            ctx.status[agent_name] = "done" if output_data else "error"
+
+    return ctx

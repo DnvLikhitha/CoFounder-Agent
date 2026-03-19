@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from backend.api.routes.run import run_events
+from backend.db.session import get_run, get_agent_outputs
 
 router = APIRouter()
 
@@ -16,6 +17,7 @@ async def stream_run(run_id: str):
     """
     SSE endpoint that streams pipeline events in real-time.
     Client connects and receives events as agents complete.
+    For already-completed runs (e.g. from history), emits from DB and finishes.
     """
     async def event_generator():
         last_index = 0
@@ -25,6 +27,17 @@ async def stream_run(run_id: str):
 
         # Send initial connection event
         yield f"data: {json.dumps({'event': 'connected', 'run_id': run_id})}\n\n"
+
+        # If no in-memory events, check if run is completed in DB (e.g. user opened from history)
+        events = run_events.get(run_id, [])
+        if not events:
+            run = await get_run(run_id)
+            if run and run.get("status") == "completed":
+                outputs = await get_agent_outputs(run_id)
+                for out in sorted(outputs, key=lambda x: (x.get("agent_layer", 0), x.get("agent_name", ""))):
+                    yield f"event: agent_done\ndata: {json.dumps({'agent': out['agent_name'], 'layer': out.get('agent_layer', 0), 'output': out.get('output_data', {}), 'latency_ms': out.get('latency_ms', 0)})}\n\n"
+                yield f"event: pipeline_complete\ndata: {json.dumps({'run_id': run_id})}\n\n"
+                return
 
         while elapsed < timeout_seconds:
             # Get new events since last poll

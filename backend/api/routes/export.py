@@ -6,16 +6,25 @@ from fastapi.responses import StreamingResponse, Response
 import io
 
 from backend.api.routes.run import active_runs
+from backend.db.session import build_context_from_db
 from backend.export.pdf_generator import generate_pdf
 from backend.export.markdown_writer import generate_markdown
 
 router = APIRouter()
 
 
+async def _get_context(run_id: str):
+    """Get RunContext from memory or rebuild from DB."""
+    ctx = active_runs.get(run_id)
+    if not ctx:
+        ctx = await build_context_from_db(run_id)
+    return ctx
+
+
 @router.get("/api/run/{run_id}/export/pdf")
 async def export_pdf(run_id: str):
     """Generate and download a PDF report."""
-    ctx = active_runs.get(run_id)
+    ctx = await _get_context(run_id)
     if not ctx:
         raise HTTPException(status_code=404, detail="Run not found or not completed yet")
 
@@ -32,7 +41,7 @@ async def export_pdf(run_id: str):
 @router.get("/api/run/{run_id}/export/markdown")
 async def export_markdown(run_id: str):
     """Generate and download a Markdown report."""
-    ctx = active_runs.get(run_id)
+    ctx = await _get_context(run_id)
     if not ctx:
         raise HTTPException(status_code=404, detail="Run not found or not completed yet")
 
@@ -49,7 +58,7 @@ async def export_markdown(run_id: str):
 @router.get("/api/run/{run_id}/result")
 async def get_full_result(run_id: str):
     """Get the full structured result as JSON."""
-    ctx = active_runs.get(run_id)
+    ctx = await _get_context(run_id)
     if not ctx:
         raise HTTPException(status_code=404, detail="Run not found or not completed yet")
 

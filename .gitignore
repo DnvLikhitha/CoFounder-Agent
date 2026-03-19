@@ -1,6 +1,7 @@
 # ------------------------------
 # Backend (Python / FastAPI)
 # ------------------------------
+.venv/
 backend/.venv/
 backend/.env
 backend/.env.*

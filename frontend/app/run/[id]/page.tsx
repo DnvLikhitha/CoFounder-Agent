@@ -6,7 +6,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useRunStore, AGENT_LIST } from "@/lib/store";
-import { createEventSource, getExportUrl } from "@/lib/api";
+import { createEventSource, getExportUrl, getApiBase } from "@/lib/api";
 import { Download, Sparkles, ArrowLeft, History } from "lucide-react";
 import { AgentProgressTracker } from "@/components/AgentProgressTracker";
 import { OutputSection } from "@/components/OutputSection";
@@ -34,18 +34,20 @@ const AGENT_META: Record<string, { label: string; emoji: string; layer: number }
 // ── Tab order for output viewer ───────────────────────────────
 const OUTPUT_TABS = [
   { key: "executive_summary", label: "Summary", emoji: "📋" },
-  { key: "startup_idea",       label: "Idea",    emoji: "💡" },
-  { key: "market_research",    label: "Market",  emoji: "📊" },
-  { key: "competitor_analysis",label: "Compete", emoji: "🥊" },
-  { key: "customer_personas",  label: "Personas",emoji: "👤" },
-  { key: "product_design",     label: "Product", emoji: "🎨" },
-  { key: "mvp_roadmap",        label: "Roadmap", emoji: "🗺️" },
-  { key: "business_model",     label: "Business",emoji: "💼" },
-  { key: "pricing_strategy",   label: "Pricing", emoji: "💰" },
-  { key: "financial_projections",label:"Finance",emoji: "📈" },
-  { key: "risk_register",      label: "Risks",   emoji: "⚠️" },
-  { key: "tech_architecture",  label: "Tech",    emoji: "🏗️" },
-  { key: "pitch_deck",         label: "Deck",    emoji: "🎯" },
+  { key: "startup_idea", label: "Idea", emoji: "💡" },
+  { key: "market_research", label: "Market", emoji: "📊" },
+  { key: "competitor_analysis", label: "Compete", emoji: "🥊" },
+  { key: "customer_personas", label: "Personas", emoji: "👤" },
+  { key: "product_design", label: "Product", emoji: "🎨" },
+  { key: "mvp_roadmap", label: "Roadmap", emoji: "🗺️" },
+  { key: "business_model", label: "Business", emoji: "💼" },
+  { key: "pricing_strategy", label: "Pricing", emoji: "💰" },
+  { key: "financial_projections", label: "Finance", emoji: "📈" },
+  { key: "risk_register", label: "Risks", emoji: "⚠️" },
+  { key: "tech_architecture", label: "Tech", emoji: "🏗️" },
+  { key: "database_schema", label: "Schema", emoji: "🗄️" },
+  { key: "security_compliance", label: "Security", emoji: "🔒" },
+  { key: "pitch_deck", label: "Deck", emoji: "🎯" },
 ];
 
 // ── Render a JSON output as readable Markdown ─────────────────
@@ -129,6 +131,18 @@ function renderOutput(key: string, data: any): string {
     return `## Tech Architecture\n\n### Frontend\n- ${fe.framework} + ${fe.styling}\n- Hosting: ${fe.hosting}\n\n### Backend\n- ${be.framework} (${be.language})\n- Hosting: ${be.hosting}\n\n### Database\n- ${db.primary}\n- Cache: ${db.cache}\n\n### AI Layer\n- ${data.ai_layer?.primary_llm}\n\n${data.architecture_description || ""}`;
   }
 
+  if (key === "database_schema") {
+    const sql = data.sql_schema || data.raw_sql || "";
+    const entities = (data.entities || []).map((e: any) => `- ${typeof e === "string" ? e : e.name || JSON.stringify(e)}`).join("\n");
+    return `## Database Schema\n\n### SQL\n\`\`\`sql\n${sql}\n\`\`\`\n\n### Entities\n${entities || "_None_"}`;
+  }
+
+  if (key === "security_compliance") {
+    const checklist = (data.security_checklist || []).map((c: any) => `- **${c.item || c}**: ${c.action || c.status || ""}`).join("\n");
+    const compliance = (data.compliance_requirements || []).map((r: any) => `- ${typeof r === "string" ? r : r.requirement || JSON.stringify(r)}`).join("\n");
+    return `## Security & Compliance\n\n### Checklist\n${checklist || "_None_"}\n\n### Compliance\n${compliance || "_None_"}\n\n**Auth:** ${data.auth_recommendation?.strategy || data.auth_recommendation || ""}`;
+  }
+
   if (key === "pitch_deck") {
     return (data.slides || []).map((s: any) =>
       `## Slide ${s.slide_number}: ${s.title}\n\n**${s.headline || ""}**\n\n${(s.bullet_points || []).map((b: string) => `- ${b}`).join("\n")}\n\n${s.key_stat ? `📊 **${s.key_stat}**` : ""}\n\n_Speaker Notes: ${s.speaker_notes || ""}_`
@@ -145,10 +159,17 @@ export default function RunPage() {
   const {
     agentStatuses, outputs, isPipelineRunning, isComplete, progressPercent, elapsedSeconds,
     updateAgent, setOutput, setPipelineRunning, setComplete, setElapsedSeconds,
+    reset,
   } = useRunStore();
 
   const [activeTab, setActiveTab] = useState("executive_summary");
   const [startupName, setStartupName] = useState("Generating...");
+
+  // Reset store when navigating to a different run (e.g. from history)
+  useEffect(() => {
+    reset();
+    useRunStore.getState().setRunId(runId);
+  }, [runId]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -229,7 +250,7 @@ export default function RunPage() {
       setTimeout(() => {
         if (!isComplete) {
           // Try fetching the result directly
-          fetch(`http://localhost:8000/api/run/${runId}/result`)
+          fetch(`${getApiBase()}/api/run/${runId}/result`)
             .then(r => r.json())
             .then(data => {
               // Populate outputs from fetched result
