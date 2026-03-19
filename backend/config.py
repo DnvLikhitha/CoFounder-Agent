@@ -1,8 +1,16 @@
 """
 config.py — Application settings using Pydantic BaseSettings
 """
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
+
+# Load .env from backend/ directory (works whether run from project root or backend/)
+_BACKEND_DIR = Path(__file__).resolve().parent
+_ENV_FILE = _BACKEND_DIR / ".env"
+# Fallback to project root .env if backend/.env doesn't exist
+_ENV_PATH = str(_ENV_FILE) if _ENV_FILE.exists() else str(_BACKEND_DIR.parent / ".env")
 
 
 class Settings(BaseSettings):
@@ -33,7 +41,7 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",")]
 
     class Config:
-        env_file = ".env"
+        env_file = _ENV_PATH
         env_file_encoding = "utf-8"
 
 
