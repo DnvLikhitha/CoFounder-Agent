@@ -1,9 +1,11 @@
 """
 Layer 2: Agent 9 — Financial Projection Analyst (parallel-eligible)
 Builds 12-month P&L projection with unit economics.
+Uses FRED for interest rates, inflation, and macro context.
 """
 from backend.agents.base import BaseAgent
 from backend.context import RunContext
+from backend.tools.fred_client import fetch_fred_data
 
 
 PROMPT_TEMPLATE = """You are a CFO with 15 years of experience building financial models for Series A startups.
@@ -12,8 +14,9 @@ Startup: {startup_name}
 Pricing Tiers: {pricing_tiers}
 SAM: ${sam}B
 GTM Strategy: {gtm_channels}
+{external_research_block}
 
-Build a realistic 12-month financial projection. Apply S-curve growth pattern:
+Build a realistic 12-month financial projection. Consider current interest rates and inflation when modeling costs and growth. Apply S-curve growth pattern:
 - Months 1-2: Pre-launch / beta (0 to beta users)
 - Months 3-6: Early traction (initial paying customers)
 - Months 7-12: Growth phase (scaling)
@@ -67,7 +70,10 @@ class Agent9_Financials(BaseAgent):
     name = "Agent9_Financials"
     layer = 2
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    async def fetch_research(self, ctx: RunContext) -> str:
+        return await fetch_fred_data(caller=self.name)
+
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         biz = ctx.business_model
@@ -76,12 +82,15 @@ class Agent9_Financials(BaseAgent):
             f"{t.get('tier_name', '?')}: ${t.get('price_monthly_usd', 0)}/mo"
             for t in pricing.get("tiers", [])
         ]
-        channels = biz.get("customer_acquisition_strategy", {}).get("primary_channel", "direct outreach")
+        acq = biz.get("customer_acquisition_strategy") or {}
+        channels = acq.get("primary_channel", "direct outreach") if isinstance(acq, dict) else str(biz.get("gtm_channels", "direct outreach"))
+        block = f"\nCurrent Economic Data (use for cost of capital, inflation assumptions):\n{external_research}\n" if external_research else ""
         return PROMPT_TEMPLATE.format(
             startup_name=idea.get("startup_name", "Our Startup"),
             pricing_tiers=", ".join(tiers) if tiers else "Freemium: $0, Pro: $49/mo, Team: $149/mo",
             sam=market.get("sam_usd_billions", 1),
             gtm_channels=str(channels),
+            external_research_block=block,
         )
 
     def parse_output(self, raw: str) -> dict:

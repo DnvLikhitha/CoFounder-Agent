@@ -16,6 +16,10 @@ _ENV_PATH = str(_ENV_FILE) if _ENV_FILE.exists() else str(_BACKEND_DIR.parent / 
 class Settings(BaseSettings):
     # LLM
     groq_api_key: str = Field(default="", env="GROQ_API_KEY")
+
+    # External tools
+    serpapi_api_key: str = Field(default="", env="SERPAPI_API_KEY")
+    fred_api_key: str = Field(default="", env="FRED_API_KEY")
     google_ai_api_key: str = Field(default="", env="GOOGLE_AI_API_KEY")
     cerebras_api_key: str = Field(default="", env="CEREBRAS_API_KEY")
 

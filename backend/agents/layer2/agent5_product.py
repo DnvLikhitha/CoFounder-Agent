@@ -60,7 +60,7 @@ class Agent5_ProductDesigner(BaseAgent):
     name = "Agent5_ProductDesigner"
     layer = 2
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         personas = ctx.customer_personas
         primary = personas[0].get("name", "Primary user") if personas else "Primary user"

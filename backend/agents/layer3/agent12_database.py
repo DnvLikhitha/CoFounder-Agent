@@ -48,7 +48,7 @@ class Agent12_DatabaseSchema(BaseAgent):
     name = "Agent12_DatabaseSchema"
     layer = 3
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         product = ctx.product_design
         biz = ctx.business_model

@@ -73,7 +73,7 @@ class Agent13_Security(BaseAgent):
     name = "Agent13_Security"
     layer = 3
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         product = ctx.product_design
         features = [f.get("feature", "") for f in product.get("must_have_features", [])[:4]]

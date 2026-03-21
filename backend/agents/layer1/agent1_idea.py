@@ -1,9 +1,11 @@
 """
 Layer 1: Agent 1 — Startup Idea Generator
 Generates 3 startup concepts and selects the strongest one.
+Uses SerpAPI to validate similar startups exist and find naming conflicts.
 """
 from backend.agents.base import BaseAgent
 from backend.context import RunContext
+from backend.tools.search import search_web
 
 
 PROMPT_TEMPLATE = """You are a serial entrepreneur and YC partner who has seen 1000+ startup pitches.
@@ -11,6 +13,7 @@ PROMPT_TEMPLATE = """You are a serial entrepreneur and YC partner who has seen 1
 Problem Statement: {problem_refined}
 Domain: {domain}
 Target Geography: {geography}
+{external_research_block}
 
 Step 1: Generate EXACTLY 3 distinct startup ideas that solve this problem in fundamentally different ways.
 Step 2: Evaluate each on: market size, differentiation, feasibility, and timing.
@@ -41,11 +44,17 @@ class Agent1_IdeaGenerator(BaseAgent):
     name = "Agent1_IdeaGenerator"
     layer = 1
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    async def fetch_research(self, ctx: RunContext) -> str:
+        query = f"startups solving {ctx.problem_refined or ctx.problem_raw[:100]} {ctx.domain or ''}"
+        return await search_web(query, num_results=5, caller=self.name)
+
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+        block = f"\nExternal Research (use to validate ideas, avoid naming conflicts):\n{external_research}\n" if external_research else ""
         return PROMPT_TEMPLATE.format(
             problem_refined=ctx.problem_refined or ctx.problem_raw,
             domain=ctx.domain or "General",
             geography=ctx.geography or "Global",
+            external_research_block=block,
         )
 
     def parse_output(self, raw: str) -> dict:

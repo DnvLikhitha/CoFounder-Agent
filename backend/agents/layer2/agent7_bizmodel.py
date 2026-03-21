@@ -54,7 +54,7 @@ class Agent7_BusinessModel(BaseAgent):
     name = "Agent7_BusinessModel"
     layer = 2
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         comp = ctx.competitor_analysis

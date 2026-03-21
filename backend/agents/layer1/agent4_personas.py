@@ -75,7 +75,7 @@ class Agent4_Personas(BaseAgent):
     name = "Agent4_Personas"
     layer = 1
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         segments = [s.get("segment", "") for s in market.get("target_segments", [])]

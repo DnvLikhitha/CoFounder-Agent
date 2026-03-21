@@ -46,7 +46,7 @@ class Agent10_RiskAnalyst(BaseAgent):
     name = "Agent10_RiskAnalyst"
     layer = 2
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         biz = ctx.business_model
         revenue = biz.get("revenue_streams", [{}])

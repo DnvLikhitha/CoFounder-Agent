@@ -1,9 +1,12 @@
 """
 Layer 1: Agent 2 — Market Research Analyst
 Estimates market size, growth, and dynamics like a McKinsey analyst.
+Uses SerpAPI for market data + FRED for macro economic indicators.
 """
 from backend.agents.base import BaseAgent
 from backend.context import RunContext
+from backend.tools.search import search_web
+from backend.tools.fred_client import fetch_fred_data
 
 
 PROMPT_TEMPLATE = """You are a Senior Market Research Analyst at McKinsey & Company.
@@ -12,6 +15,7 @@ Startup: {startup_name}
 Problem: {problem_refined}
 Domain: {domain}
 Target Customer: {target_customer}
+{external_research_block}
 
 Conduct a comprehensive market sizing analysis.
 
@@ -45,7 +49,7 @@ Output EXACTLY this JSON:
 }}
 ```
 
-Be realistic with numbers. Cite the reasoning in market_timing.
+Be realistic with numbers. Cite the reasoning in market_timing. Use the external research above to ground your TAM/SAM/SOM estimates where possible.
 """
 
 
@@ -53,13 +57,25 @@ class Agent2_MarketResearch(BaseAgent):
     name = "Agent2_MarketResearch"
     layer = 1
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    async def fetch_research(self, ctx: RunContext) -> str:
         idea = ctx.startup_idea
+        startup = idea.get("startup_name", "startup")
+        domain = ctx.domain or "market"
+        search_q = f"{domain} market size TAM SAM 2024 2025"
+        search_res = await search_web(search_q, num_results=5, caller=self.name)
+        fred_res = await fetch_fred_data(caller=self.name)
+        parts = [p for p in [search_res, fred_res] if p]
+        return "\n\n".join(parts) if parts else ""
+
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+        idea = ctx.startup_idea
+        block = f"\nExternal Research (use to ground your estimates):\n{external_research}\n" if external_research else ""
         return PROMPT_TEMPLATE.format(
             startup_name=idea.get("startup_name", "Our Startup"),
             problem_refined=ctx.problem_refined,
             domain=ctx.domain or "General",
             target_customer=idea.get("target_customer", ""),
+            external_research_block=block,
         )
 
     def parse_output(self, raw: str) -> dict:

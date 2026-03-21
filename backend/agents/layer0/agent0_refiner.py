@@ -46,7 +46,7 @@ class Agent0_Refiner(BaseAgent):
     name = "Agent0_Refiner"
     layer = 0
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         return PROMPT_TEMPLATE.format(
             problem_raw=self.safe_text(ctx.problem_raw),
             domain=ctx.domain or "Not specified",

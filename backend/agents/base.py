@@ -17,9 +17,13 @@ class BaseAgent(ABC):
     def __init__(self, llm_client):
         self.llm = llm_client
 
+    async def fetch_research(self, ctx) -> str:
+        """Override to fetch external data (SerpAPI, FRED, etc.). Return string for prompt injection."""
+        return ""
+
     @abstractmethod
-    def build_prompt(self, ctx) -> str:
-        """Build the LLM prompt from the current RunContext."""
+    def build_prompt(self, ctx, external_research: str = "") -> str:
+        """Build the LLM prompt from the current RunContext. Use external_research if provided."""
         pass
 
     @abstractmethod
@@ -44,7 +48,8 @@ class BaseAgent(ABC):
                 "agent": self.name, "layer": self.layer
             })
 
-        prompt = self.build_prompt(ctx)
+        external_research = await self.fetch_research(ctx)
+        prompt = self.build_prompt(ctx, external_research)
 
         last_error = None
         for attempt in range(self.MAX_RETRIES):

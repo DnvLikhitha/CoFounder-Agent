@@ -70,7 +70,7 @@ class Agent6_MVPRoadmap(BaseAgent):
     name = "Agent6_MVPRoadmap"
     layer = 2
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         product = ctx.product_design
         must_haves = [f.get("feature", "") for f in product.get("must_have_features", [])[:5]]

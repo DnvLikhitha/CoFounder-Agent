@@ -54,7 +54,7 @@ class Agent15_ExecutiveSummary(BaseAgent):
     name = "Agent15_ExecutiveSummary"
     layer = 4
 
-    def build_prompt(self, ctx: RunContext) -> str:
+    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         biz = ctx.business_model
