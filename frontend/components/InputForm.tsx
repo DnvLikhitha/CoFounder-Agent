@@ -48,9 +48,9 @@ export function InputForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-6 max-w-2xl w-full">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-6 max-w-3xl w-full rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]/75 p-5 sm:p-6 shadow-[0_12px_35px_rgba(79,70,229,0.15)]">
       <div>
-        <label htmlFor="problem" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+        <label htmlFor="problem" className="block text-sm font-semibold text-[var(--text-primary)] mb-2">
           What problem are you solving?
         </label>
         <textarea
@@ -60,10 +60,10 @@ export function InputForm() {
           placeholder="e.g. Students waste 10+ hours per week finding study partners for group projects, leading to stress and lower grades."
           rows={4}
           maxLength={500}
-          className="w-full px-4 py-3 rounded-xl border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
+          className="input-surface resize-none placeholder:text-[var(--text-muted)]"
           disabled={loading}
         />
-        <div className="flex justify-between mt-1 text-xs text-zinc-500">
+        <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
           <span>Min 10 chars, max 500</span>
           <span>{problem.length}/500</span>
         </div>
@@ -71,14 +71,14 @@ export function InputForm() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label htmlFor="domain" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+          <label htmlFor="domain" className="block text-sm font-semibold text-[var(--text-primary)] mb-2">
             Industry (optional)
           </label>
           <select
             id="domain"
             value={domain}
             onChange={(e) => setDomain(e.target.value)}
-            className="w-full px-4 py-3 rounded-xl border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            className="input-surface"
             disabled={loading}
           >
             {DOMAINS.map((d) => (
@@ -87,7 +87,7 @@ export function InputForm() {
           </select>
         </div>
         <div>
-          <label htmlFor="geography" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+          <label htmlFor="geography" className="block text-sm font-semibold text-[var(--text-primary)] mb-2">
             Target geography (optional)
           </label>
           <input
@@ -96,14 +96,14 @@ export function InputForm() {
             value={geography}
             onChange={(e) => setGeography(e.target.value)}
             placeholder="e.g. US, Europe, India"
-            className="w-full px-4 py-3 rounded-xl border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            className="input-surface placeholder:text-[var(--text-muted)]"
             disabled={loading}
           />
         </div>
       </div>
 
       {error && (
-        <div className="px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm">
+        <div className="px-4 py-3 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 text-[var(--danger)] text-sm">
           {error}
         </div>
       )}
@@ -111,7 +111,7 @@ export function InputForm() {
       <button
         type="submit"
         disabled={loading}
-        className="flex items-center justify-center gap-2 w-full py-4 px-6 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:bg-violet-400 text-white font-semibold text-lg transition-colors"
+        className="flex items-center justify-center gap-2 w-full py-4 px-6 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-70 text-white font-semibold text-lg transition-colors shadow-lg shadow-indigo-500/20"
       >
         {loading ? (
           <>

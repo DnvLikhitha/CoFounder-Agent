@@ -178,7 +178,9 @@ export default function RunPage() {
     timerRef.current = setInterval(() => {
       setElapsedSeconds(prev => prev + 1);
     }, 1000);
-    return () => clearInterval(timerRef.current);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, []);
 
   // Connect SSE
@@ -236,13 +238,13 @@ export default function RunPage() {
     es.addEventListener("pipeline_complete", () => {
       setPipelineRunning(false);
       setComplete(true);
-      clearInterval(timerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
       es.close();
     });
 
     es.addEventListener("pipeline_error", () => {
       setPipelineRunning(false);
-      clearInterval(timerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
       es.close();
     });
 
@@ -272,52 +274,52 @@ export default function RunPage() {
   const doneCount = Object.values(agentStatuses).filter(a => a.status === "done").length;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg-primary)" }}>
+    <div className="app-shell flex flex-col h-screen">
       {/* ── Top Bar ─────────────────────────────────────────────── */}
-      <header style={{ borderBottom: "1px solid var(--border)", padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={() => router.push("/")} className="btn-secondary" style={{ padding: "6px 12px", display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+      <header className="border-b border-indigo-500/30 px-4 sm:px-5 py-3 flex items-center justify-between gap-3 flex-shrink-0 bg-gradient-to-r from-indigo-500/10 via-purple-500/8 to-transparent backdrop-blur-sm">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button onClick={() => router.push("/")} className="btn-secondary px-3 py-1.5 flex items-center gap-1.5 text-xs sm:text-sm">
             <ArrowLeft size={14} /> Home
           </button>
-          <button onClick={() => router.push("/history")} className="btn-secondary" style={{ padding: "6px 12px", display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+          <button onClick={() => router.push("/history")} className="btn-secondary px-3 py-1.5 flex items-center gap-1.5 text-xs sm:text-sm">
             <History size={14} /> History
           </button>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="hidden md:flex items-center gap-2 min-w-0">
             <Sparkles size={16} style={{ color: "var(--accent)" }} />
-            <span style={{ fontWeight: 700 }}>{startupName}</span>
+            <span className="font-bold text-[var(--text-primary)] truncate max-w-[230px]">{startupName}</span>
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div className="flex items-center gap-2 sm:gap-4">
           {/* Progress */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 120, background: "var(--bg-card)", height: 6, borderRadius: 3 }}>
+          <div className="hidden sm:flex items-center gap-2">
+            <div style={{ width: 120, background: "var(--bg-card)", height: 6, borderRadius: 8 }}>
               <div style={{ width: `${progressPercent}%`, height: "100%", background: "linear-gradient(90deg, var(--accent), #a78bfa)", borderRadius: 3, transition: "width 0.5s" }} />
             </div>
-            <span style={{ fontSize: 13, color: "var(--text-secondary)", minWidth: 60 }}>
+            <span className="text-xs text-[var(--text-secondary)] min-w-[72px]">
               {doneCount}/16 agents
             </span>
           </div>
-          <span style={{ fontSize: 13, color: "var(--text-muted)" }}>⏱ {formatTime(elapsedSeconds)}</span>
+          <span className="text-xs text-[var(--text-muted)]">⏱ {formatTime(elapsedSeconds)}</span>
 
           {/* Status badge */}
           {isComplete ? (
-            <span style={{ background: "rgba(34,197,94,0.15)", color: "var(--success)", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
+            <span className="bg-green-500/15 text-[var(--success)] px-3 py-1 rounded-full text-xs font-semibold">
               ✅ Complete
             </span>
           ) : (
-            <span style={{ background: "var(--accent-dim)", color: "var(--accent-hover)", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
+            <span className="bg-[var(--accent-dim)] text-[var(--accent-hover)] px-3 py-1 rounded-full text-xs font-semibold">
               ⚡ Running
             </span>
           )}
 
           {/* Export */}
           {isComplete && (
-            <div style={{ display: "flex", gap: 8 }}>
-              <a href={getExportUrl(runId, "pdf")} target="_blank" className="btn-secondary" style={{ padding: "6px 14px", display: "flex", alignItems: "center", gap: 6, fontSize: 13, textDecoration: "none" }}>
+            <div className="hidden sm:flex gap-2">
+              <a href={getExportUrl(runId, "pdf")} target="_blank" className="btn-secondary px-3 py-1.5 flex items-center gap-1.5 text-xs no-underline">
                 <Download size={14} /> PDF
               </a>
-              <a href={getExportUrl(runId, "markdown")} target="_blank" className="btn-secondary" style={{ padding: "6px 14px", display: "flex", alignItems: "center", gap: 6, fontSize: 13, textDecoration: "none" }}>
+              <a href={getExportUrl(runId, "markdown")} target="_blank" className="btn-secondary px-3 py-1.5 flex items-center gap-1.5 text-xs no-underline">
                 <Download size={14} /> MD
               </a>
             </div>
@@ -325,7 +327,7 @@ export default function RunPage() {
         </div>
       </header>
 
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div className="run-grid flex-1 overflow-hidden">
         {/* ── Sidebar: Agent Progress ─────────────────────────── */}
         <AgentProgressTracker agentList={AGENT_LIST} agentStatuses={agentStatuses} metaByAgent={AGENT_META} />
 

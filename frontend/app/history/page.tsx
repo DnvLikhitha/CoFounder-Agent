@@ -47,40 +47,41 @@ export default function HistoryPage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-4">
+    <div className="app-shell">
+      <header className="border-b border-[var(--border)]/70">
+        <div className="max-w-4xl mx-auto px-6 py-5 flex items-center gap-4">
           <button
             onClick={() => router.push("/")}
-            className="flex items-center gap-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+            className="btn-secondary px-4 py-2 flex items-center gap-2 text-sm font-semibold"
           >
             <ArrowLeft size={18} />
             Home
           </button>
-          <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
+          <h1 className="text-xl font-bold text-[var(--text-primary)]">
             Past runs
           </h1>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 py-8">
+      <main className="max-w-4xl mx-auto px-6 py-8">
+        <div className="glass-panel hero-shimmer p-5 sm:p-7">
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-zinc-500">
+          <div className="flex items-center justify-center gap-2 py-16 text-[var(--text-secondary)]">
             <Loader2 size={24} className="animate-spin" />
             Loading...
           </div>
         ) : error ? (
-          <div className="flex items-center gap-2 py-16 text-red-600 dark:text-red-400">
+          <div className="flex items-center gap-2 py-16 text-[var(--danger)]">
             <AlertCircle size={24} />
             {error}
           </div>
         ) : runs.length === 0 ? (
-          <div className="text-center py-16 text-zinc-500">
+          <div className="text-center py-16 text-[var(--text-secondary)]">
             <Sparkles size={48} className="mx-auto mb-4 opacity-50" />
             <p>No runs yet. Start your first one from the home page.</p>
             <Link
               href="/"
-              className="inline-block mt-4 text-violet-600 dark:text-violet-400 font-medium hover:underline"
+              className="inline-block mt-4 text-[var(--accent)] font-semibold hover:underline"
             >
               Go to Home →
             </Link>
@@ -91,15 +92,15 @@ export default function HistoryPage() {
               <li key={run.id}>
                 <Link
                   href={`/run/${run.id}`}
-                  className="block p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-300 dark:hover:border-violet-700 transition-colors"
+                  className="block p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--accent)]/60 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-4">
-                    <p className="text-zinc-900 dark:text-zinc-100 font-medium line-clamp-2 flex-1 min-w-0">
+                    <p className="text-[var(--text-primary)] font-medium line-clamp-2 flex-1 min-w-0">
                       {run.problem_raw}
                     </p>
                     {statusBadge(run.status)}
                   </div>
-                  <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
+                  <div className="mt-2 text-xs text-[var(--text-muted)]">
                     {formatDate(run.created_at)}
                     {run.completed_at && ` • Completed ${formatDate(run.completed_at)}`}
                   </div>
@@ -108,6 +109,7 @@ export default function HistoryPage() {
             ))}
           </ul>
         )}
+        </div>
       </main>
     </div>
   );

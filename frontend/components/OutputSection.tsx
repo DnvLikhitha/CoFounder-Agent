@@ -24,44 +24,21 @@ export function OutputSection({
   renderOutput,
 }: OutputSectionProps) {
   const content = renderOutput(activeTab, outputs[activeTab]);
+  const isPending = !outputs[activeTab];
 
   return (
-    <section
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        minWidth: 0,
-        background: "var(--bg-primary)",
-      }}
-    >
+    <section className="glass-panel flex-1 flex flex-col min-w-0 overflow-hidden border border-indigo-500/20">
       {/* Tab bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: 2,
-          padding: "12px 16px 0",
-          borderBottom: "1px solid var(--border)",
-          overflowX: "auto",
-          flexShrink: 0,
-        }}
-      >
+      <div className="flex gap-2 px-4 pt-4 border-b border-indigo-500/25 overflow-x-auto flex-shrink-0 bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => onActiveTabChange(tab.key)}
+            className="px-3 py-2 text-xs font-semibold rounded-t-lg border border-transparent border-b-0 whitespace-nowrap mb-[-1px] transition-all"
             style={{
-              padding: "8px 14px",
-              fontSize: 13,
-              fontWeight: 500,
-              borderRadius: "8px 8px 0 0",
-              border: "1px solid transparent",
-              borderBottom: "none",
-              background: activeTab === tab.key ? "var(--bg-card)" : "transparent",
-              color: activeTab === tab.key ? "var(--accent)" : "var(--text-secondary)",
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-              marginBottom: -1,
+              background: activeTab === tab.key ? "color-mix(in srgb, var(--bg-card) 92%, #6366f1 8%)" : "transparent",
+              color: activeTab === tab.key ? "#c7d2fe" : "var(--text-secondary)",
+              borderColor: activeTab === tab.key ? "rgba(99, 102, 241, 0.3)" : "transparent",
             }}
           >
             {tab.emoji} {tab.label}
@@ -70,18 +47,14 @@ export function OutputSection({
       </div>
 
       {/* Content area */}
-      <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: 24,
-          background: "var(--bg-card)",
-          margin: 16,
-          marginTop: 8,
-          borderRadius: 12,
-          border: "1px solid var(--border)",
-        }}
-      >
+      <div className="flex-1 overflow-auto p-4 sm:p-5">
+        <div className="h-full rounded-xl border border-indigo-500/20 bg-[var(--bg-card)]/90 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+        {isPending && (
+          <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-indigo-500/15 text-indigo-200 border border-indigo-500/25">
+            <span className="inline-block w-2 h-2 rounded-full bg-indigo-300 animate-pulse" />
+            Waiting for this agent output...
+          </div>
+        )}
         <div
           className="markdown-content"
           style={{
@@ -91,6 +64,7 @@ export function OutputSection({
           }}
           dangerouslySetInnerHTML={{ __html: markdownToHtml(content) }}
         />
+        </div>
       </div>
     </section>
   );
@@ -109,7 +83,7 @@ function markdownToHtml(md: string): string {
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*(.+?)\*([^*])/g, "<em>$1</em>$2");
   html = html.replace(/^\- (.+)$/gm, "<li>$1</li>");
-  html = html.replace(/(<li>.*?<\/li>\n?)+/gs, "<ul>$&</ul>");
+  html = html.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, "<ul>$&</ul>");
   // Tables: | a | b | -> <table><tr><td>a</td><td>b</td></tr></table>
   const lines = html.split("\n");
   const out: string[] = [];
