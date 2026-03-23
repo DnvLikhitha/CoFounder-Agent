@@ -130,3 +130,59 @@ async def list_runs():
     # In production, get user_id from JWT token
     runs = await get_recent_runs(limit=25)
     return {"runs": runs}
+
+
+@router.get("/api/run/{run_id}/result")
+async def get_run_result(run_id: str):
+    """
+    Return a flat dict of all agent outputs for a completed run.
+    Used by the frontend SSE onerror recovery handler.
+    """
+    # First try in-memory context (most up-to-date, includes fallbacks)
+    ctx = active_runs.get(run_id)
+    if ctx:
+        result = {}
+        ctx_fields = [
+            "problem_refined", "startup_idea", "market_research",
+            "competitor_analysis", "customer_personas", "product_design",
+            "mvp_roadmap", "business_model", "pricing_strategy",
+            "financial_projections", "risk_register", "tech_architecture",
+            "database_schema", "security_compliance", "pitch_deck",
+            "executive_summary",
+        ]
+        for field in ctx_fields:
+            val = getattr(ctx, field, None)
+            if val:
+                result[field] = val
+        return result
+
+    # Fall back to DB agent outputs
+    outputs = await get_agent_outputs(run_id)
+    if not outputs:
+        raise HTTPException(status_code=404, detail="No results found for this run")
+
+    key_map = {
+        "Agent0_Refiner": "problem_refined",
+        "Agent1_IdeaGenerator": "startup_idea",
+        "Agent2_MarketResearch": "market_research",
+        "Agent3_Competitors": "competitor_analysis",
+        "Agent4_Personas": "customer_personas",
+        "Agent5_ProductDesigner": "product_design",
+        "Agent6_MVPRoadmap": "mvp_roadmap",
+        "Agent7_BusinessModel": "business_model",
+        "Agent8_Pricing": "pricing_strategy",
+        "Agent9_Financials": "financial_projections",
+        "Agent10_RiskAnalyst": "risk_register",
+        "Agent11_TechArchitecture": "tech_architecture",
+        "Agent12_DatabaseSchema": "database_schema",
+        "Agent13_Security": "security_compliance",
+        "Agent14_PitchDeck": "pitch_deck",
+        "Agent15_ExecutiveSummary": "executive_summary",
+    }
+
+    result = {}
+    for out in outputs:
+        key = key_map.get(out.get("agent_name", ""), "")
+        if key and out.get("output_data"):
+            result[key] = out["output_data"]
+    return result

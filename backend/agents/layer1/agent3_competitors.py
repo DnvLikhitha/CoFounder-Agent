@@ -6,6 +6,7 @@ Uses SerpAPI to discover real competitors and their pricing.
 from backend.agents.base import BaseAgent
 from backend.context import RunContext
 from backend.tools.search import search_web
+import re
 
 
 PROMPT_TEMPLATE = """You are a Competitive Intelligence Analyst specializing in startup ecosystems.
@@ -58,7 +59,15 @@ class Agent3_Competitors(BaseAgent):
         startup = idea.get("startup_name", "startup")
         domain = ctx.domain or "software"
         query = f"{startup} competitors alternatives {domain} pricing"
-        return await search_web(query, num_results=8, caller=self.name)
+        search_res = await search_web(query, num_results=8, caller=self.name)
+        serp_sources = re.findall(r"Source:\s*(https?://\S+)", search_res or "")
+        serp_sources = list(dict.fromkeys(serp_sources))
+        if not hasattr(ctx, "_tool_evidence_by_agent"):
+            ctx._tool_evidence_by_agent = {}
+        ctx._tool_evidence_by_agent[self.name] = {
+            "serpapi_sources": serp_sources,
+        }
+        return search_res
 
     def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
@@ -75,6 +84,11 @@ class Agent3_Competitors(BaseAgent):
         return self.extract_json(raw)
 
     def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
+        evidence = {}
+        if hasattr(ctx, "_tool_evidence_by_agent"):
+            evidence = ctx._tool_evidence_by_agent.get(self.name, {}) or {}
+        if evidence:
+            parsed["tool_evidence"] = evidence
         ctx.competitor_analysis = parsed
         return ctx
 

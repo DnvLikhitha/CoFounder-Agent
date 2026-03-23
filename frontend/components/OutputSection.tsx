@@ -29,48 +29,61 @@ export function OutputSection({
   return (
     <section className="glass-panel flex-1 flex flex-col min-w-0 overflow-hidden border border-indigo-500/20">
       {/* Tab bar */}
-      <div className="flex gap-2 px-4 pt-4 border-b border-indigo-500/25 overflow-x-auto flex-shrink-0 bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => onActiveTabChange(tab.key)}
-            className="px-3 py-2 text-xs font-semibold rounded-t-lg border border-transparent border-b-0 whitespace-nowrap mb-[-1px] transition-all"
-            style={{
-              background: activeTab === tab.key ? "color-mix(in srgb, var(--bg-card) 92%, #6366f1 8%)" : "transparent",
-              color: activeTab === tab.key ? "#c7d2fe" : "var(--text-secondary)",
-              borderColor: activeTab === tab.key ? "rgba(99, 102, 241, 0.3)" : "transparent",
-            }}
-          >
-            {tab.emoji} {tab.label}
-          </button>
-        ))}
+      <div className="flex gap-2.5 px-6 py-5 border-b border-[var(--border)] overflow-x-auto flex-shrink-0 scrollbar-hide">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => onActiveTabChange(tab.key)}
+              className={`px-4 py-2 text-xs font-semibold rounded-full whitespace-nowrap transition-all duration-300 border ${
+                isActive 
+                  ? "bg-[var(--accent)] text-white border-[var(--accent)] shadow-[0_4px_12px_var(--accent-dim)]" 
+                  : "bg-[var(--bg-card)] text-[var(--text-secondary)] border-[var(--border)] hover:border-[var(--accent)]/50 hover:text-[var(--text-primary)]"
+              }`}
+            >
+              <span className="opacity-80 mr-1.5">{tab.emoji}</span> {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Content area */}
-      <div className="flex-1 overflow-auto p-4 sm:p-5">
-        <div className="h-full rounded-xl border border-indigo-500/20 bg-[var(--bg-card)]/90 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-        {isPending && (
-          <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-indigo-500/15 text-indigo-200 border border-indigo-500/25">
-            <span className="inline-block w-2 h-2 rounded-full bg-indigo-300 animate-pulse" />
-            Waiting for this agent output...
+      <div className="flex-1 overflow-auto p-6 sm:p-8">
+        {isPending ? (
+          <div className="flex flex-col gap-5 w-full opacity-70">
+            <div className="inline-flex self-start items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-[var(--accent-dim)] text-[var(--accent)] border border-[var(--accent)]/20 shadow-sm">
+              <span className="inline-block w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
+              Generating response...
+            </div>
+            <div className="space-y-4 pt-4">
+              <div className="h-8 bg-[var(--border)] rounded-md w-1/3 hero-shimmer" />
+              <div className="space-y-3">
+                <div className="h-4 bg-[var(--border)] rounded w-full hero-shimmer" />
+                <div className="h-4 bg-[var(--border)] rounded w-11/12 hero-shimmer" />
+                <div className="h-4 bg-[var(--border)] rounded w-5/6 hero-shimmer" />
+                <div className="h-4 bg-[var(--border)] rounded w-full hero-shimmer" />
+                <div className="h-4 bg-[var(--border)] rounded w-3/4 hero-shimmer" />
+              </div>
+            </div>
           </div>
+        ) : (
+          <div
+            className="markdown-content"
+            style={{
+              fontSize: 15,
+              lineHeight: 1.8,
+              color: "var(--text-primary)",
+            }}
+            dangerouslySetInnerHTML={{ __html: markdownToHtml(content) }}
+          />
         )}
-        <div
-          className="markdown-content"
-          style={{
-            fontSize: 14,
-            lineHeight: 1.7,
-            color: "var(--text-primary)",
-          }}
-          dangerouslySetInnerHTML={{ __html: markdownToHtml(content) }}
-        />
-        </div>
       </div>
     </section>
   );
 }
 
-/** Simple markdown-to-HTML for our structured output (headings, bold, lists, tables, code) */
+/** Simple markdown-to-HTML for our structured output (headings, bold, lists, tables, code, links) */
 function markdownToHtml(md: string): string {
   if (!md) return "";
   let html = md
@@ -82,6 +95,10 @@ function markdownToHtml(md: string): string {
   html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*(.+?)\*([^*])/g, "<em>$1</em>$2");
+  // Markdown links: [text](url)
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="output-link">$1</a>');
+  // Bare URLs (not already inside an href="..." or anchor tag)
+  html = html.replace(/(?<!href="|href='|>)(https?:\/\/[^\s<)"',]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="output-link">$1</a>');
   html = html.replace(/^\- (.+)$/gm, "<li>$1</li>");
   html = html.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, "<ul>$&</ul>");
   // Tables: | a | b | -> <table><tr><td>a</td><td>b</td></tr></table>

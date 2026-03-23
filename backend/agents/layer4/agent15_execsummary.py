@@ -26,7 +26,7 @@ Top Risk: {top_risk}
 
 Write a compelling investor memo. Reference specific numbers. Be honest about risks.
 
-Output EXACTLY this JSON:
+Output EXACTLY this JSON (Don't mention any other things):
 
 ```json
 {{

@@ -58,7 +58,15 @@ Output EXACTLY this JSON:
   "cac_usd": 150,
   "ltv_cac_ratio": 6.5,
   "payback_period_months": 3,
-  "key_assumptions_note": "Based on conservative S-curve growth; actual results depend on marketing execution"
+  "key_assumptions_note": "Based on conservative S-curve growth; actual results depend on marketing execution",
+  "sensitivity_top_factors": [
+    {{
+      "factor": "CAC",
+      "sensitivity_level": "high|medium|low",
+      "what_happens_if_higher": "Short note",
+      "what_happens_if_lower": "Short note"
+    }}
+  ]
 }}
 ```
 
@@ -71,7 +79,13 @@ class Agent9_Financials(BaseAgent):
     layer = 2
 
     async def fetch_research(self, ctx: RunContext) -> str:
-        return await fetch_fred_data(caller=self.name)
+        fred_res = await fetch_fred_data(caller=self.name)
+        if not hasattr(ctx, "_tool_evidence_by_agent"):
+            ctx._tool_evidence_by_agent = {}
+        ctx._tool_evidence_by_agent[self.name] = {
+            "fred_data": fred_res,
+        }
+        return fred_res
 
     def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
         idea = ctx.startup_idea
@@ -97,6 +111,11 @@ class Agent9_Financials(BaseAgent):
         return self.extract_json(raw)
 
     def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
+        evidence = {}
+        if hasattr(ctx, "_tool_evidence_by_agent"):
+            evidence = ctx._tool_evidence_by_agent.get(self.name, {}) or {}
+        if evidence:
+            parsed["tool_evidence"] = evidence
         ctx.financial_projections = parsed
         return ctx
 

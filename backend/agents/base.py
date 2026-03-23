@@ -91,30 +91,67 @@ class BaseAgent(ABC):
         return ctx
 
     def extract_json(self, text: str) -> dict:
-        """Extract JSON from LLM output that may contain markdown fences or extra text."""
-        # Try JSON code fence first
+        """Extract JSON from LLM output that may contain markdown fences, extra text, or be truncated."""
+
+        def try_parse(s: str):
+            try:
+                return json.loads(s.strip())
+            except (json.JSONDecodeError, ValueError):
+                return None
+
+        def repair_truncated(s: str):
+            """Attempt to close truncated JSON strings/objects."""
+            s = s.strip()
+            # Try simple suffixes to close an open string + object
+            for suffix in ['"}}', '"}', '"]\n}', '"}\n}']:
+                result = try_parse(s + suffix)
+                if result:
+                    return result
+            # Scan backwards for last complete key-value pair and close object
+            for i in range(len(s) - 1, max(len(s) - 300, 5), -1):
+                if s[i] in (',', '{'):
+                    result = try_parse(s[:i] + '}')
+                    if result and isinstance(result, dict):
+                        return result
+            return None
+
+        # 1. Try JSON code fence
         match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
         if match:
-            try:
-                return json.loads(match.group(1).strip())
-            except json.JSONDecodeError:
-                pass
+            extracted = match.group(1).strip()
+            result = try_parse(extracted)
+            if result is not None:
+                return result
+            result = repair_truncated(extracted)
+            if result is not None:
+                logger.warning(f"[{self.name}] Repaired truncated JSON from code fence.")
+                return result
 
-        # Try to find raw JSON object
+        # 2. Try raw JSON object
         match = re.search(r'\{[\s\S]*\}', text)
         if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
+            result = try_parse(match.group(0))
+            if result is not None:
+                return result
+            result = repair_truncated(match.group(0))
+            if result is not None:
+                logger.warning(f"[{self.name}] Repaired truncated raw JSON object.")
+                return result
 
-        # Try to find JSON array
+        # 3. Scan from first '{' to end of text (handles truncated output with no closing })
+        brace_pos = text.find('{')
+        if brace_pos != -1:
+            result = repair_truncated(text[brace_pos:])
+            if result is not None:
+                logger.warning(f"[{self.name}] Repaired partially-extracted JSON.")
+                return result
+
+        # 4. Try JSON array
         match = re.search(r'\[[\s\S]*\]', text)
         if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
+            result = try_parse(match.group(0))
+            if result is not None:
+                return result
 
         raise ValueError(f"Could not extract JSON from LLM output: {text[:200]}...")
 

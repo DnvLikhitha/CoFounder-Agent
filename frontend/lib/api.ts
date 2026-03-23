@@ -12,7 +12,7 @@ export function createEventSource(runId: string): EventSource {
   return new EventSource(`${API_BASE}/api/run/${runId}/stream`);
 }
 
-export function getExportUrl(runId: string, format: "pdf" | "markdown"): string {
+export function getExportUrl(runId: string, format: "pdf" | "markdown" | "pptx"): string {
   return `${API_BASE}/api/run/${runId}/export/${format}`;
 }
 

@@ -194,6 +194,9 @@ async def build_context_from_db(run_id: str) -> "RunContext | None":
         if field_name:
             if agent_name == "Agent0_Refiner":
                 ctx.problem_refined = output_data.get("problem_refined", ctx.problem_raw)
+            elif agent_name == "Agent4_Personas":
+                # Agent4 output shape: { "personas": [...] }
+                ctx.customer_personas = output_data.get("personas", [])
             else:
                 setattr(ctx, field_name, output_data)
         if agent_name:

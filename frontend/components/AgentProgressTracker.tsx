@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentStatus } from "@/lib/store";
+import { Loader2 } from "lucide-react";
 
 interface AgentMeta {
   label: string;
@@ -13,13 +14,6 @@ interface AgentProgressTrackerProps {
   agentStatuses: Record<string, AgentStatus>;
   metaByAgent: Record<string, AgentMeta>;
 }
-
-const statusIcon: Record<string, string> = {
-  pending: "○",
-  running: "◐",
-  done: "✓",
-  error: "✗",
-};
 
 const statusColor: Record<string, string> = {
   pending: "var(--text-muted)",
@@ -35,11 +29,11 @@ export function AgentProgressTracker({
 }: AgentProgressTrackerProps) {
   return (
     <aside className="glass-panel w-full sm:w-[280px] flex-shrink-0 p-4 overflow-y-auto border border-indigo-500/20">
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide">
-        Agent Progress
+      <div className="flex items-center justify-between mb-4 px-1">
+        <div className="text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+          Agent Progress
         </div>
-        <div className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/25">
+        <div className="text-[10px] font-medium px-2.5 py-1 rounded-full bg-[var(--accent-dim)] text-[var(--accent)] border border-[var(--accent)]/20">
           16 agents
         </div>
       </div>
@@ -48,16 +42,25 @@ export function AgentProgressTracker({
           const status = agentStatuses[agent] || { name: agent, status: "pending" as const };
           const meta = metaByAgent[agent] || { label: agent, emoji: "•", layer: 0 };
           const color = statusColor[status.status] || statusColor.pending;
+          const isRunning = status.status === "running";
+          
           return (
             <li
               key={agent}
-              className="group flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border border-indigo-500/10 bg-indigo-500/[0.06] hover:bg-indigo-500/[0.12] transition-colors"
+              className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-300 border-l-[3px] ${
+                isRunning 
+                  ? "bg-[var(--accent-dim)] border-[var(--accent)] shadow-[0_0_20px_var(--accent-dim)]" 
+                  : "border-transparent hover:bg-white/5 dark:hover:bg-black/20"
+              }`}
               style={{ color: status.status === "pending" ? "var(--text-muted)" : "var(--text-primary)" }}
             >
-              <span style={{ color, fontWeight: 600, width: 14, textAlign: "center" }}>
-                {statusIcon[status.status]}
+              <span style={{ color, display: "flex", justifyContent: "center", width: 14 }}>
+                {status.status === "pending" && "○"}
+                {status.status === "running" && <Loader2 size={12} className="animate-spin" />}
+                {status.status === "done" && "✓"}
+                {status.status === "error" && "✗"}
               </span>
-              <span>{meta.emoji}</span>
+              <span className={isRunning ? "scale-110 transition-transform" : ""}>{meta.emoji}</span>
               <div className="flex-1 min-w-0">
                 <div className="font-medium overflow-hidden text-ellipsis whitespace-nowrap">
                   {meta.label}

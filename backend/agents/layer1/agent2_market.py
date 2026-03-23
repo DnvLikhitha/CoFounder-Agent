@@ -7,6 +7,7 @@ from backend.agents.base import BaseAgent
 from backend.context import RunContext
 from backend.tools.search import search_web
 from backend.tools.fred_client import fetch_fred_data
+import re
 
 
 PROMPT_TEMPLATE = """You are a Senior Market Research Analyst at McKinsey & Company.
@@ -65,6 +66,15 @@ class Agent2_MarketResearch(BaseAgent):
         search_res = await search_web(search_q, num_results=5, caller=self.name)
         fred_res = await fetch_fred_data(caller=self.name)
         parts = [p for p in [search_res, fred_res] if p]
+        # Store deterministic evidence (SerpAPI links + FRED snippet) into ctx for later merge into agent output.
+        serp_sources = re.findall(r"Source:\s*(https?://\S+)", search_res or "")
+        serp_sources = list(dict.fromkeys(serp_sources))  # unique, preserve order
+        if not hasattr(ctx, "_tool_evidence_by_agent"):
+            ctx._tool_evidence_by_agent = {}
+        ctx._tool_evidence_by_agent[self.name] = {
+            "serpapi_sources": serp_sources,
+            "fred_data": fred_res,
+        }
         return "\n\n".join(parts) if parts else ""
 
     def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
@@ -82,6 +92,11 @@ class Agent2_MarketResearch(BaseAgent):
         return self.extract_json(raw)
 
     def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
+        evidence = {}
+        if hasattr(ctx, "_tool_evidence_by_agent"):
+            evidence = ctx._tool_evidence_by_agent.get(self.name, {}) or {}
+        if evidence:
+            parsed["tool_evidence"] = evidence
         ctx.market_research = parsed
         return ctx
 

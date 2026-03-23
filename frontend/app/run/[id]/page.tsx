@@ -52,7 +52,8 @@ const OUTPUT_TABS = [
 
 // ── Render a JSON output as readable Markdown ─────────────────
 function renderOutput(key: string, data: any): string {
-  if (!data) return "_Not yet generated..._";
+  // Render nothing until the agent output arrives (keeps UI minimal)
+  if (data === undefined || data === null) return "";
 
   if (key === "executive_summary") {
     return `## Executive Summary\n\n${data.executive_summary || ""}\n\n**Mission:** ${data.mission_statement || ""}\n\n**Elevator Pitch:** ${data.elevator_pitch || ""}\n\n**Investor Email Subject:** _${data.investor_email_subject || ""}_`;
@@ -64,7 +65,15 @@ function renderOutput(key: string, data: any): string {
 
   if (key === "market_research") {
     const trends = (data.market_trends || []).map((t: string) => `- ${t}`).join("\n");
-    return `## Market Analysis\n\n| Metric | Value |\n|--------|-------|\n| TAM | $${data.tam_usd_billions}B |\n| SAM | $${data.sam_usd_billions}B |\n| SOM | $${data.som_usd_millions}M |\n| CAGR | ${data.cagr_percent}% |\n\n### Market Trends\n${trends}\n\n**Why Now:** ${data.market_timing || ""}`;
+    const sources = data.tool_evidence?.serpapi_sources || [];
+    const fredData = data.tool_evidence?.fred_data || "";
+    const sourcesBlock = sources.length
+      ? `\n\n### Research Sources\n${sources.slice(0, 8).map((s: string) => `- ${s}`).join("\n")}`
+      : "";
+    const fredBlock = fredData
+      ? `\n\n### Macro (FRED)\n${fredData.slice(0, 900)}`
+      : "";
+    return `## Market Analysis\n\n| Metric | Value |\n|--------|-------|\n| TAM | $${data.tam_usd_billions}B |\n| SAM | $${data.sam_usd_billions}B |\n| SOM | $${data.som_usd_millions}M |\n| CAGR | ${data.cagr_percent}% |\n\n### Market Trends\n${trends}\n\n**Why Now:** ${data.market_timing || ""}${sourcesBlock}${fredBlock}`;
   }
 
   if (key === "competitor_analysis") {
@@ -72,11 +81,16 @@ function renderOutput(key: string, data: any): string {
       `### ${c.name} (${c.funding_stage || "?"})\n- Price: $${c.starting_price_monthly}/mo\n- Weaknesses: ${(c.weaknesses || []).join(", ")}`
     ).join("\n\n");
     const gaps = (data.market_gaps || []).map((g: string) => `- ${g}`).join("\n");
-    return `## Competitive Landscape\n\n${comps}\n\n### Our Market Gaps\n${gaps}`;
+    const sources = data.tool_evidence?.serpapi_sources || [];
+    const sourcesBlock = sources.length
+      ? `\n\n### Research Sources\n${sources.slice(0, 8).map((s: string) => `- ${s}`).join("\n")}`
+      : "";
+    return `## Competitive Landscape\n\n${comps}\n\n### Our Market Gaps\n${gaps}${sourcesBlock}`;
   }
 
   if (key === "customer_personas") {
-    return (Array.isArray(data) ? data : []).map((p: any) =>
+    const personas = Array.isArray(data) ? data : Array.isArray(data?.personas) ? data.personas : [];
+    return personas.map((p: any) =>
       `### ${p.name || "Persona"} — ${p.job_title || ""}\n\n_"${p.quote || ""}"_\n\n**Pains:** ${(p.pain_points || []).join(" · ")}\n\n**Goals:** ${(p.goals || []).join(" · ")}\n\n**Willing to Pay:** $${p.willingness_to_pay_monthly_usd}/mo`
     ).join("\n\n---\n\n");
   }
@@ -115,7 +129,15 @@ function renderOutput(key: string, data: any): string {
         `| ${m.month} | ${m.total_customers?.toLocaleString()} | $${m.mrr_usd?.toLocaleString()} | $${m.net_profit_usd?.toLocaleString()} |`
       )
     ].join("\n");
-    return `## Financial Projections\n\n${highlights}\n\n### Monthly Breakdown\n${table}`;
+    const fredData = data.tool_evidence?.fred_data || "";
+    const fredBlock = fredData
+      ? `\n\n### Macro (FRED)\n${fredData.slice(0, 900)}`
+      : "";
+    const factors = data.sensitivity_top_factors || [];
+    const sensitivityBlock = Array.isArray(factors) && factors.length
+      ? `\n\n### Sensitivity (What moves the result most)\n${factors.slice(0, 3).map((f: any) => `- **${f.factor}** (${f.sensitivity_level || "medium"}): if higher -> ${f.what_happens_if_higher || ""}; if lower -> ${f.what_happens_if_lower || ""}`).join("\n")}`
+      : "";
+    return `## Financial Projections\n\n${highlights}\n\n### Monthly Breakdown\n${table}${sensitivityBlock}${fredBlock}`;
   }
 
   if (key === "risk_register") {
@@ -221,7 +243,14 @@ export default function RunPage() {
           Agent15_ExecutiveSummary: "executive_summary",
         };
         const outputKey = keyMap[data.agent];
-        if (outputKey) setOutput(outputKey, data.output);
+        if (outputKey) {
+          // Agent4 emits: { personas: [...] }. UI expects customer_personas to be the array directly.
+          if (data.agent === "Agent4_Personas") {
+            setOutput(outputKey, data.output.personas ?? []);
+          } else {
+            setOutput(outputKey, data.output);
+          }
+        }
 
         // Update startup name when available
         if (data.agent === "Agent1_IdeaGenerator" && data.output?.startup_name) {
@@ -276,7 +305,7 @@ export default function RunPage() {
   return (
     <div className="app-shell flex flex-col h-screen">
       {/* ── Top Bar ─────────────────────────────────────────────── */}
-      <header className="border-b border-indigo-500/30 px-4 sm:px-5 py-3 flex items-center justify-between gap-3 flex-shrink-0 bg-gradient-to-r from-indigo-500/10 via-purple-500/8 to-transparent backdrop-blur-sm">
+      <header className="border-b border-[var(--border)] px-4 sm:px-6 py-4 flex items-center justify-between gap-3 flex-shrink-0 bg-gradient-to-r from-[var(--bg-card)] via-[var(--accent-dim)] to-transparent backdrop-blur-md z-10">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button onClick={() => router.push("/")} className="btn-secondary px-3 py-1.5 flex items-center gap-1.5 text-xs sm:text-sm">
             <ArrowLeft size={14} /> Home
@@ -293,8 +322,17 @@ export default function RunPage() {
         <div className="flex items-center gap-2 sm:gap-4">
           {/* Progress */}
           <div className="hidden sm:flex items-center gap-2">
-            <div style={{ width: 120, background: "var(--bg-card)", height: 6, borderRadius: 8 }}>
-              <div style={{ width: `${progressPercent}%`, height: "100%", background: "linear-gradient(90deg, var(--accent), #a78bfa)", borderRadius: 3, transition: "width 0.5s" }} />
+            <div style={{ width: 120, background: "var(--bg-card)", height: 6, borderRadius: 8, overflow: "hidden" }}>
+              <div 
+                className={!isComplete ? "animate-progress-stripes" : ""}
+                style={{ 
+                  width: `${progressPercent}%`, 
+                  height: "100%", 
+                  backgroundColor: !isComplete ? "var(--accent)" : "var(--success)",
+                  borderRadius: 3, 
+                  transition: "width 0.5s" 
+                }} 
+              />
             </div>
             <span className="text-xs text-[var(--text-secondary)] min-w-[72px]">
               {doneCount}/16 agents
@@ -304,11 +342,11 @@ export default function RunPage() {
 
           {/* Status badge */}
           {isComplete ? (
-            <span className="bg-green-500/15 text-[var(--success)] px-3 py-1 rounded-full text-xs font-semibold">
+            <span className="bg-[var(--success)]/15 text-[var(--success)] px-3 py-1 rounded-full text-xs font-semibold">
               ✅ Complete
             </span>
           ) : (
-            <span className="bg-[var(--accent-dim)] text-[var(--accent-hover)] px-3 py-1 rounded-full text-xs font-semibold">
+            <span className="bg-[var(--accent-dim)] text-[var(--accent)] px-3 py-1 rounded-full text-xs font-semibold shadow-[0_0_10px_var(--accent-dim)]">
               ⚡ Running
             </span>
           )}
@@ -321,6 +359,9 @@ export default function RunPage() {
               </a>
               <a href={getExportUrl(runId, "markdown")} target="_blank" className="btn-secondary px-3 py-1.5 flex items-center gap-1.5 text-xs no-underline">
                 <Download size={14} /> MD
+              </a>
+              <a href={getExportUrl(runId, "pptx")} target="_blank" className="btn-secondary px-3 py-1.5 flex items-center gap-1.5 text-xs no-underline">
+                <Download size={14} /> PPTX
               </a>
             </div>
           )}

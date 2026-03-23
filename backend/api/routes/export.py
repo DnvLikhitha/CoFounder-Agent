@@ -9,6 +9,7 @@ from backend.api.routes.run import active_runs
 from backend.db.session import build_context_from_db
 from backend.export.pdf_generator import generate_pdf
 from backend.export.markdown_writer import generate_markdown
+from backend.export.pptx_generator import generate_pptx
 
 router = APIRouter()
 
@@ -51,6 +52,22 @@ async def export_markdown(run_id: str):
     return Response(
         content=md_content.encode("utf-8"),
         media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+@router.get("/api/run/{run_id}/export/pptx")
+async def export_pptx(run_id: str):
+    """Generate and download a PPTX pitch deck."""
+    ctx = await _get_context(run_id)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="Run not found or not completed yet")
+
+    pptx_bytes = generate_pptx(ctx)
+    filename = f"startup-plan-{ctx.startup_idea.get('startup_name', run_id[:8]).replace(' ', '-').lower()}.pptx"
+
+    return Response(
+        content=pptx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
