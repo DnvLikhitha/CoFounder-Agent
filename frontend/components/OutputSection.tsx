@@ -27,21 +27,21 @@ export function OutputSection({
   const isPending = !outputs[activeTab];
 
   return (
-    <section className="glass-panel flex-1 flex flex-col min-w-0 overflow-hidden border border-indigo-500/20">
+    <section className="glass-panel flex-1 flex flex-col min-w-0 overflow-hidden border border-white/10 bg-slate-900/60 backdrop-blur-2xl shadow-2xl rounded-2xl relative">
       {/* Tab bar */}
-      <div className="flex gap-2.5 px-6 py-5 border-b border-[var(--border)] overflow-x-auto flex-shrink-0 scrollbar-hide">
+      <div className="flex gap-3 px-6 py-5 border-b border-white/10 overflow-x-auto flex-shrink-0 scrollbar-hide bg-black/10 relative z-20">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.key;
           return (
-            <button
-              key={tab.key}
-              onClick={() => onActiveTabChange(tab.key)}
-              className={`px-4 py-2 text-xs font-semibold rounded-full whitespace-nowrap transition-all duration-300 border ${
-                isActive 
-                  ? "bg-[var(--accent)] text-white border-[var(--accent)] shadow-[0_4px_12px_var(--accent-dim)]" 
-                  : "bg-[var(--bg-card)] text-[var(--text-secondary)] border-[var(--border)] hover:border-[var(--accent)]/50 hover:text-[var(--text-primary)]"
-              }`}
-            >
+              <button
+                key={tab.key}
+                onClick={() => onActiveTabChange(tab.key)}
+                className={`px-4 py-2.5 text-xs font-bold rounded-full whitespace-nowrap transition-all duration-300 border ${
+                  isActive 
+                    ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white border-transparent shadow-[0_0_15px_rgba(34,211,238,0.4)] scale-105" 
+                    : "bg-white/5 text-slate-400 border-white/5 hover:border-white/20 hover:text-white"
+                }`}
+              >
               <span className="opacity-80 mr-1.5">{tab.emoji}</span> {tab.label}
             </button>
           );
@@ -49,7 +49,8 @@ export function OutputSection({
       </div>
 
       {/* Content area */}
-      <div className="flex-1 overflow-auto p-6 sm:p-8">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-cyan-900/20 via-transparent to-transparent pointer-events-none z-0" />
+      <div className="flex-1 overflow-auto p-6 sm:p-10 relative z-10">
         {isPending ? (
           <div className="flex flex-col gap-5 w-full opacity-70">
             <div className="inline-flex self-start items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-[var(--accent-dim)] text-[var(--accent)] border border-[var(--accent)]/20 shadow-sm">

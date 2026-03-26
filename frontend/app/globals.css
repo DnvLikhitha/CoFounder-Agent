@@ -145,7 +145,7 @@ body {
 
 .run-grid {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 24px;
   height: 100%;
   padding: 24px;

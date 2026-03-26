@@ -368,7 +368,7 @@ export default function RunPage() {
         </div>
       </header>
 
-      <div className="run-grid flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden grid lg:grid-cols-[340px_minmax(0,1fr)] grid-cols-1 gap-6 p-4 sm:p-6 max-w-[1600px] mx-auto w-full">
         {/* ── Sidebar: Agent Progress ─────────────────────────── */}
         <AgentProgressTracker agentList={AGENT_LIST} agentStatuses={agentStatuses} metaByAgent={AGENT_META} />
 
