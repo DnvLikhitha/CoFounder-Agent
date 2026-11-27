@@ -21,7 +21,7 @@ class AttemptLedger:
         with self.store._claimed(self.run_id, self.token) as (connection, _):
             return connection.execute(
                 """SELECT status, requested_model,
-                   GREATEST(0, EXTRACT(EPOCH FROM retry_at - clock_timestamp()))::float AS wait
+                   GREATEST(0, COALESCE(EXTRACT(EPOCH FROM retry_at - clock_timestamp()), 0))::float AS wait
                    FROM v1_llm_attempts WHERE run_id=%s AND step_id=%s ORDER BY attempt_no""",
                 (self.run_id, self.step_id)).fetchall()
 

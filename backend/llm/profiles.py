@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 PROFILE_VERSION = "groq-gpt-oss-v1"
-PROMPT_VERSION = "startup-prompts-v1"
+STARTUP_PROMPTS_V1 = "startup-prompts-v1"
+PROMPT_VERSION = STARTUP_PROMPTS_V1
 MAX_ATTEMPTS = 3
 SYSTEM_PROMPT = (
     "You are a specialized AI agent and expert analyst. "

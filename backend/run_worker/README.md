@@ -36,7 +36,7 @@ Each new live run pins its model profile, prompt bundle, and budget at submissio
 
 The adapter makes at most three attempts per agent across claims. The SDK's retries are off. Request deadlines are at most 20 seconds and fit within the worker's step deadline (`V1_PROVIDER_TIMEOUT_SECONDS`, default 120 seconds). Recoverable errors use bounded exponential backoff with jitter and honor `Retry-After` within the deadline. The compatible GPT-OSS 20B fallback shares the primary model's request and context capabilities. The worker terminates the child when its deadline or claim expires, then a replacement worker can recover from committed artifacts. [Groq rate limits](https://console.groq.com/docs/rate-limits)
 
-Create a new profile version when changing models or prices and a new prompt version when changing the prompt renderer. Keep the existing versions available to workers that can still claim pinned runs, or drain those runs before removing the corresponding definitions. The prompt fingerprint is checked at live worker startup and in tests.
+Create a new profile version when changing models or prices. Register each new prompt renderer and its system prompt in `PROMPT_BUNDLES`. Retain earlier entries and their source code while unfinished runs reference them. Live workers verify every registered fingerprint at startup and claim only runs with supported workflow, profile, and prompt versions. They pass the stored prompt version to the provider process for both queued and reclaimed runs. Roll out workers that support the new version before switching the submission default.
 
 ## React integration
 

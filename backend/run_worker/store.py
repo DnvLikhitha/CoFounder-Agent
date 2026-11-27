@@ -171,16 +171,21 @@ class Store:
         snapshot.update(data)
         self._emit(connection, snapshot, "run.updated", data, timestamp)
 
-    def claim(self, lease_seconds=30, *, versions=None):
+    def claim(self, lease_seconds=30, *, versions=None, prompt_versions=None, model_profiles=None):
         if lease_seconds <= 0:
             raise ValueError("Lease must be positive")
+        prompts = None if prompt_versions is None else list(prompt_versions)
+        profiles = None if model_profiles is None else list(model_profiles)
         with self.connect() as connection:
             row = connection.execute(
                 """SELECT * FROM v1_runs WHERE snapshot->>'status' IN ('queued','running')
                    AND snapshot->'manifest'->>'version' = ANY(%s)
+                   AND (%s::text[] IS NULL OR prompt_version = ANY(%s::text[]))
+                   AND (%s::text[] IS NULL OR model_profile = ANY(%s::text[]))
                    AND (lease_until IS NULL OR lease_until <= clock_timestamp())
                    ORDER BY created_at, run_id FOR UPDATE SKIP LOCKED LIMIT 1""",
-                (list(workflow.WORKFLOWS if versions is None else versions),)).fetchone()
+                (list(workflow.WORKFLOWS if versions is None else versions), prompts, prompts,
+                 profiles, profiles)).fetchone()
             if row is None:
                 return None
             token, snapshot = str(uuid4()), row["snapshot"]

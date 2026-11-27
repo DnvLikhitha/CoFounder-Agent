@@ -8,9 +8,9 @@ import time
 import psycopg
 
 from backend.config import settings
-from backend.llm.profiles import PROFILES, PROMPT_VERSION
+from backend.llm.profiles import PROFILES
 from backend.run_worker.ledger import BudgetExceeded
-from backend.run_worker.live_agents import PROMPT_FINGERPRINT, live_provider, prompt_fingerprint
+from backend.run_worker.live_agents import PROMPT_BUNDLES, live_provider, verify_prompt_bundles
 from backend.run_worker.provider_call import ClaimCalls, ProviderTimeout, call_with_deadline
 from backend.run_worker.store import LostClaim, Store
 from backend.run_worker.workflow import (
@@ -28,9 +28,10 @@ def execute_claim(store, claim, provider=None, lease_seconds=30, heartbeat_mode=
         if version == LIVE_VERSION:
             configuration = store.live_configuration(run_id, token)
             profile = configuration["model_profile"]
-            if profile not in PROFILES or configuration["prompt_version"] != PROMPT_VERSION:
+            prompt_version = configuration["prompt_version"]
+            if profile not in PROFILES or prompt_version not in PROMPT_BUNDLES:
                 raise ValueError("Unsupported pinned live execution profile")
-            provider = partial(live_provider, store=store, claim=claim, profile=profile,
+            provider = partial(live_provider, store=store, claim=claim, profile=profile, prompt_version=prompt_version,
                                timeout=settings.v1_provider_timeout_seconds)
     dependencies = {step["step_id"]: set(step["depends_on"]) for step in definitions}
     if version == LIVE_VERSION:
@@ -99,16 +100,19 @@ def main():
         mode = settings.require_v1_provider_mode()
         if not settings.database_url:
             raise ValueError("DATABASE_URL is required")
-        if mode == "live" and prompt_fingerprint() != PROMPT_FINGERPRINT:
-            raise ValueError("Live prompt bundle does not match its recorded version")
+        if mode == "live":
+            verify_prompt_bundles()
     except ValueError as exc:
         parser.error(str(exc))
-    versions = (LIVE_VERSION,) if mode == "live" else FAKE_VERSIONS
+    if mode == "live":
+        claim_options = dict(versions=(LIVE_VERSION,), prompt_versions=PROMPT_BUNDLES, model_profiles=PROFILES)
+    else:
+        claim_options = dict(versions=FAKE_VERSIONS)
     store = Store(settings.database_url)
     while True:
         try:
             store.heartbeat(mode)
-            claim = store.claim(versions=versions)
+            claim = store.claim(**claim_options)
             if claim:
                 execute_claim(store, claim, heartbeat_mode=mode)
         except LostClaim:

@@ -57,6 +57,17 @@ class ProviderTests(IsolatedAsyncioTestCase):
         self.assertEqual(calls[0].kwargs["cost"], 0)
         self.assertEqual(calls[1].kwargs, {"usage": (23, 19), "actual_model": "openai/gpt-oss-20b", "cost": 7425})
 
+    async def test_restored_attempt_without_retry_time_dispatches_immediately(self):
+        for outcome in ("unknown", "succeeded"):
+            with self.subTest(outcome=outcome):
+                self.ledger.history.return_value = [
+                    {"status": outcome, "requested_model": "openai/gpt-oss-120b", "wait": None},
+                ]
+                self.replies = [(200, {}, None)]
+                with patch("backend.llm.client.asyncio.sleep") as wait:
+                    self.assertEqual(await self.client.complete("private prompt"), "{}")
+                wait.assert_not_awaited()
+
     async def test_transient_exhaustion_is_bounded_and_uncertain_usage_is_kept(self):
         self.replies = [(503, {}, "unavailable")] * 3
         with patch("backend.llm.client.asyncio.sleep") as wait, patch("backend.llm.client.uniform", side_effect=lambda a, b: b):

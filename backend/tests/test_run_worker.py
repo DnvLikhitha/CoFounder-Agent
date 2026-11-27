@@ -34,6 +34,7 @@ from backend.llm.profiles import PROFILES, PROFILE_VERSION, PROMPT_VERSION
 from backend.run_worker.api import app, store
 from backend.run_worker.auth import supabase_keys
 from backend.run_worker.ledger import AttemptLedger, BudgetExceeded
+from backend.run_worker.live_agents import PROMPT_BUNDLES
 from backend.run_worker.provider_call import call_with_deadline
 from backend.run_worker import workflow
 from backend.run_worker.store import LostClaim, Store, StoreError
@@ -946,6 +947,56 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("GROQ_API_KEY", response.json()["error"]["message"])
         self.assertIsNone(self.database.claim())
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_older_pinned_runs_complete_after_new_prompt_default(self):
+        claim_options = dict(versions=(LIVE_VERSION,), prompt_versions=PROMPT_BUNDLES, model_profiles=PROFILES)
+        model = PROFILES[PROFILE_VERSION][0]
+        step = "problem_refined"
+        for prior in (None, "reserved", "succeeded"):
+            with self.subTest(prior=prior):
+                initial = self.database.submit("alice", f"older-{prior}", self.body, version=LIVE_VERSION)
+                run_id = initial["run_id"]
+                if prior:
+                    claim = self.database.claim(**claim_options)
+                    self.database.begin_step(*claim, step)
+                    ledger = AttemptLedger(self.database, *claim, step)
+                    attempt = ledger.reserve(model, 200, 100)
+                    if prior == "succeeded":
+                        ledger.settle(attempt, prior, actual_model=model.name, usage=(200, 100),
+                                      cost=model.cost(200, 100))
+                    self.expire(run_id)
+
+                with patch("backend.run_worker.store.PROMPT_VERSION", "startup-prompts-v2"), \
+                     patch("backend.run_worker.live_agents.PROMPT_VERSION", "startup-prompts-v2"), \
+                     patch("backend.run_worker.worker.live_provider", fixture_provider), \
+                     patch.object(settings, "v1_step_concurrency", 1):
+                    newer = self.database.submit("alice", "new-prompt-default", self.body, version=LIVE_VERSION)
+                    restarted = Store(self.dsn)
+                    replacement = restarted.claim(**claim_options)
+                    self.assertEqual(replacement[0], run_id)
+                    self.assertEqual(restarted.live_configuration(*replacement)["prompt_version"], PROMPT_VERSION)
+                    if prior:
+                        history = AttemptLedger(restarted, *replacement, step).history()
+                        self.assertEqual(history[0]["wait"], 0)
+                    execute_claim(restarted, replacement)
+                    self.assertIsNone(restarted.claim(**claim_options))
+
+                final = restarted.snapshot("alice", run_id)
+                self.assertEqual(final["status"], "succeeded")
+                self.assertEqual(len(final["artifacts"]), 16)
+                self.assertEqual(replay(initial, restarted.events("alice", run_id, 0)), final)
+                self.assertEqual(restarted.snapshot("alice", newer["run_id"])["status"], "queued")
+                with restarted.connect() as connection:
+                    attempts = connection.execute(
+                        """SELECT status, charged_tokens FROM v1_llm_attempts
+                           WHERE run_id=%s AND step_id=%s ORDER BY attempt_no""", (run_id, step)
+                    ).fetchall()
+                expected = [{"status": "succeeded", "charged_tokens": 400}]
+                if prior:
+                    previous = "unknown" if prior == "reserved" else prior
+                    expected.insert(0, {"status": previous, "charged_tokens": 300})
+                self.assertEqual(attempts, expected)
 
     def test_all_live_agents_publish_committed_artifacts_and_export_real_content(self):
         from io import BytesIO
