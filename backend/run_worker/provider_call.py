@@ -5,7 +5,7 @@ from multiprocessing import get_context
 from threading import Lock
 from time import monotonic
 
-from backend.run_worker.workflow import ProviderFailure
+from backend.run_worker.workflow import InvalidOutput, ProviderFailure
 
 
 class ProviderTimeout(ProviderFailure):
@@ -51,10 +51,12 @@ def _invoke(sender, provider, step_id, body, upstream):
     with sender:
         try:
             output = provider(step_id, body, upstream)
+        except InvalidOutput:
+            sender.send(("invalid_output", None))
         except Exception:
-            sender.send((False, None))
+            sender.send(("provider_failed", None))
         else:
-            sender.send((True, output))
+            sender.send(("ok", output))
 
 
 def call_with_deadline(provider, step_id, body, upstream, timeout, calls):
@@ -68,12 +70,14 @@ def call_with_deadline(provider, step_id, body, upstream, timeout, calls):
         if not receiver.poll(max(0, deadline - monotonic())):
             raise ProviderTimeout()
         try:
-            ok, output = receiver.recv()
+            status, output = receiver.recv()
         except EOFError:
             raise ProviderFailure() from None
         process.join(max(0, deadline - monotonic()))
         if process.is_alive() or monotonic() >= deadline:
             raise ProviderTimeout()
-        if not ok or process.exitcode:
+        if status == "invalid_output":
+            raise InvalidOutput(step_id)
+        if status != "ok" or process.exitcode:
             raise ProviderFailure()
         return output

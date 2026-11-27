@@ -46,11 +46,12 @@ Output EXACTLY this JSON:
   "key_market_drivers": ["driver1", "driver2", "driver3"],
   "regulatory_environment": "Brief description of relevant regulations",
   "market_timing": "Why NOW is the right time to enter this market",
-  "data_sources_referenced": ["IBISWorld", "Statista", "Gartner", "Industry reports"]
+  "data_sources_referenced": []
 }}
 ```
 
-Be realistic with numbers. Cite the reasoning in market_timing. Use the external research above to ground your TAM/SAM/SOM estimates where possible.
+Label market sizes as estimates and describe the basis in market_timing.
+List only sources available in the input. Use null for values that cannot be estimated responsibly.
 """
 
 
@@ -102,11 +103,11 @@ class Agent2_MarketResearch(BaseAgent):
 
     def write_fallback(self, ctx: RunContext) -> RunContext:
         ctx.market_research = {
-            "tam_usd_billions": 10,
-            "sam_usd_billions": 1,
-            "som_usd_millions": 20,
-            "cagr_percent": 15,
-            "market_trends": ["Growing digital adoption"],
+            "tam_usd_billions": None,
+            "sam_usd_billions": None,
+            "som_usd_millions": None,
+            "cagr_percent": None,
+            "market_trends": [],
             "target_segments": [],
         }
         return ctx

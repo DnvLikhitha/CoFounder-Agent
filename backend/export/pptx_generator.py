@@ -71,7 +71,7 @@ def _add_footer(slide, text: str) -> None:
     p.runs[0].font.size = Pt(10)
 
 
-def generate_pptx(ctx: RunContext) -> bytes:
+def generate_pptx(ctx: RunContext, *, notice="") -> bytes:
     """
     Generate a pitch deck PPTX from ctx.pitch_deck.slides (Agent14 output).
     """
@@ -94,6 +94,8 @@ def generate_pptx(ctx: RunContext) -> bytes:
     title_slide = prs.slides.add_slide(prs.slide_layouts[0])
     _add_title(title_slide, idea.get("startup_name", "Startup Plan"))
     _add_subtitle(title_slide, idea.get("tagline", "Investor-ready pitch deck"))
+    if notice:
+        _add_bullets(title_slide, [notice])
     _add_footer(title_slide, f"AI Startup Co-Founder Agent | Run ID: {ctx.run_id}")
 
     # Remaining slides (skip slides[0] if it represents "The Problem" etc; Agent still includes 12 slides)
@@ -113,6 +115,8 @@ def generate_pptx(ctx: RunContext) -> bytes:
         key_stat = s.get("key_stat")
         if key_stat:
             _add_subtitle(slide, str(key_stat)[:120])
+        if notes := s.get("speaker_notes"):
+            slide.notes_slide.notes_text_frame.text = str(notes)
 
         _add_footer(slide, f"Run ID: {ctx.run_id}")
 

@@ -75,13 +75,12 @@ class Agent11_TechArchitecture(BaseAgent):
         product = ctx.product_design
         market = ctx.market_research
         features = [f.get("feature", "") for f in product.get("must_have_features", [])[:4]]
-        som = market.get("som_usd_millions", 20)
-        scale = int(som * 10)  # rough user estimate
+        som = market.get("som_usd_millions")
         return PROMPT_TEMPLATE.format(
             startup_name=idea.get("startup_name", "Our Startup"),
             core_features=", ".join(features) if features else "core product features",
             business_type=idea.get("business_type", "SaaS"),
-            scale_target=f"{scale:,}",
+            scale_target=f"{int(som * 10):,} estimated" if som is not None else "unknown number of",
             domain=ctx.domain or "Technology",
         )
 

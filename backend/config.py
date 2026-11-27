@@ -2,6 +2,7 @@
 config.py — Application settings using Pydantic BaseSettings
 """
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings
 from pydantic import Field
@@ -39,11 +40,22 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", env="ENVIRONMENT")
     max_concurrent_runs: int = Field(default=5, env="MAX_CONCURRENT_RUNS")
     database_url: str = ""
+    v1_provider_mode: Literal["", "fake", "live"] = ""
+    v1_step_concurrency: int = Field(default=2, ge=1, le=8)
     v1_provider_timeout_seconds: float = Field(default=120, gt=0, allow_inf_nan=False)
     v1_jwt_secret: str = ""
     v1_jwt_issuer: str = "cofounder-agent"
     v1_jwt_audience: str = "cofounder-api"
     cors_origins: str = Field(default="http://localhost:3000", env="CORS_ORIGINS")
+
+    def require_v1_provider_mode(self):
+        if not self.v1_provider_mode:
+            raise ValueError("Set V1_PROVIDER_MODE to live or fake")
+        if self.v1_provider_mode == "fake" and self.environment.strip().lower() in {"prod", "production"}:
+            raise ValueError("V1_PROVIDER_MODE must be live in production")
+        if self.v1_provider_mode == "live" and not self.groq_api_key.strip():
+            raise ValueError("GROQ_API_KEY is required for V1_PROVIDER_MODE=live")
+        return self.v1_provider_mode
 
     @property
     def cors_origins_list(self) -> list[str]:

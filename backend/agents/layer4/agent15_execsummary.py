@@ -3,6 +3,7 @@ Layer 4: Agent 15 — Executive Summary Writer
 Synthesizes everything into a 1-page investor memo.
 """
 from backend.agents.base import BaseAgent
+from backend.agents.investor_metrics import investor_metrics
 from backend.context import RunContext
 
 
@@ -14,17 +15,17 @@ Startup: {startup_name}
 One-liner: {one_liner}
 Problem: {problem_refined}
 Solution: {value_prop}
-Market: ${tam}B TAM, ${sam}B SAM, {cagr}% CAGR
+Market estimates: TAM {tam}, SAM {sam}, CAGR {cagr}
 Business Model: {revenue_model}
 Key Differentiator: {differentiator}
 Pricing: {pricing_summary}
-Financial Highlights:
-  - Break-even: Month {breakeven}
-  - 12-month ARR: ${arr}K
+Financial Projections:
+  - Break-even: {breakeven}
+  - 12-month ARR: {arr}
   - LTV:CAC Ratio: {ltv_cac}
 Top Risk: {top_risk}
 
-Write a compelling investor memo. Reference specific numbers. Be honest about risks.
+Write a compelling investor memo. Use supplied numbers only, label estimates, and omit unavailable facts.
 
 Output EXACTLY this JSON (Don't mention any other things):
 
@@ -34,14 +35,14 @@ Output EXACTLY this JSON (Don't mention any other things):
   "one_liner": "One sentence that captures the entire startup (under 15 words)",
   "mission_statement": "Why this company exists beyond making money",
   "key_metrics_snapshot": {{
-    "market_size": "${tam}B TAM",
-    "growth_rate": "{cagr}% CAGR",
+    "market_size": "{tam}",
+    "growth_rate": "{cagr}",
     "target_customer": "...",
     "revenue_model": "...",
-    "pricing": "From $X/month",
-    "break_even": "Month {breakeven}",
-    "ltv_cac": "{ltv_cac}x",
-    "12mo_arr": "${arr}K"
+    "pricing": "{pricing_summary}",
+    "break_even": "{breakeven}",
+    "ltv_cac": "{ltv_cac}",
+    "12mo_arr": "{arr}"
   }},
   "elevator_pitch": "30-second verbal pitch for a founder to deliver at a networking event",
   "investor_email_subject": "Subject line for a cold investor email"
@@ -62,32 +63,25 @@ class Agent15_ExecutiveSummary(BaseAgent):
         fin = ctx.financial_projections
         risk = ctx.risk_register
 
-        revenue_stream = biz.get("revenue_streams", [{}])
-        model = revenue_stream[0].get("model", "SaaS subscription") if revenue_stream else "SaaS"
+        revenue_stream = biz.get("revenue_streams", [])
+        model = revenue_stream[0].get("model", "Unavailable") if revenue_stream else "Unavailable"
         tiers = pricing.get("tiers", [])
-        pricing_summary = " / ".join([f"${t.get('price_monthly_usd',0)}/mo ({t.get('tier_name','?')})" for t in tiers[:3]])
+        pricing_summary = " / ".join(f"${t['price_monthly_usd']}/mo ({t['tier_name']})" for t in tiers[:3]
+                                     if t.get("tier_name") and t.get("price_monthly_usd") is not None)
 
         risks = risk.get("risks", [])
-        top_risk = risks[0].get("title", "Market adoption risk") if risks else "Market adoption risk"
-
-        ltv_cac = fin.get("ltv_cac_ratio", 3.5)
-        arr = int(fin.get("arr_month_12_usd", 50000) / 1000)
+        top_risk = risks[0].get("title", "Unavailable") if risks else "Unavailable"
 
         return PROMPT_TEMPLATE.format(
             startup_name=idea.get("startup_name", "Our Startup"),
             one_liner=idea.get("one_liner", ""),
             problem_refined=ctx.problem_refined[:300],
             value_prop=idea.get("value_proposition", "")[:200],
-            tam=market.get("tam_usd_billions", 10),
-            sam=market.get("sam_usd_billions", 1),
-            cagr=market.get("cagr_percent", 15),
             revenue_model=model,
             differentiator=idea.get("key_differentiator", "")[:150],
-            pricing_summary=pricing_summary or "Freemium + Pro + Team tiers",
-            breakeven=fin.get("breakeven_month", 8),
-            arr=arr,
-            ltv_cac=ltv_cac,
+            pricing_summary=pricing_summary or "Unavailable",
             top_risk=top_risk,
+            **investor_metrics(market, fin),
         )
 
     def parse_output(self, raw: str) -> dict:

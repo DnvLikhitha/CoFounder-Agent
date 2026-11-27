@@ -1,0 +1,386 @@
+{
+  "problem_refined": {
+    "problem_refined": "Students waste hours locating verified internships with flexible schedules.",
+    "target_user": "Part-time students",
+    "domain_confirmed": "Education"
+  },
+  "startup_idea": {
+    "startup_name": "Campus Bridge & Co",
+    "tagline": "Verified internships for busy students",
+    "one_liner": "Campus Bridge finds verified flexible internships.",
+    "value_proposition": "Match verified roles against academic schedules.",
+    "target_customer": "Campus career centers",
+    "key_differentiator": "Verified hours and eligibility",
+    "business_type": "B2B2C",
+    "unfair_advantage": "Career-center partnerships"
+  },
+  "market_research": {
+    "tam_usd_billions": 2.75,
+    "sam_usd_billions": 0.15,
+    "som_usd_millions": 1.5,
+    "cagr_percent": null,
+    "market_trends": [
+      "Growing demand for flexible roles"
+    ],
+    "market_timing": "Career centers are testing hybrid job fairs.",
+    "target_segments": [
+      {
+        "segment": "Community college career centers"
+      }
+    ],
+    "tool_evidence": {
+      "serpapi_sources": [
+        "https://invented.example/should-not-be-retained"
+      ]
+    }
+  },
+  "competitor_analysis": {
+    "competitors": [
+      {
+        "name": "Example Job Board",
+        "strengths": [
+          "Large audience"
+        ],
+        "weaknesses": [
+          "Hours are unverified"
+        ],
+        "starting_price_monthly": 50
+      }
+    ],
+    "market_gaps": [
+      "Verified part-time hours"
+    ]
+  },
+  "customer_personas": {
+    "personas": [
+      {
+        "name": "Avery Student",
+        "job_title": "Part-time student",
+        "pain_points": [
+          "Missing schedule details"
+        ],
+        "willingness_to_pay_monthly_usd": 0
+      }
+    ]
+  },
+  "product_design": {
+    "must_have_features": [
+      {
+        "feature": "Schedule Filter",
+        "description": "Find roles with verified schedules."
+      }
+    ],
+    "core_ux_flows": [
+      {
+        "flow_name": "Discover roles",
+        "steps": [
+          "Enter availability",
+          "Filter verified schedules"
+        ]
+      }
+    ]
+  },
+  "mvp_roadmap": {
+    "sprints": [
+      {
+        "sprint_number": 1,
+        "sprint_goal": "Validate scheduling fit",
+        "duration_weeks": 2,
+        "deliverable": "Search prototype",
+        "user_stories": [
+          {
+            "id": "US-1",
+            "title": "See confirmed hours"
+          }
+        ]
+      }
+    ],
+    "total_weeks": 2
+  },
+  "business_model": {
+    "revenue_streams": [
+      {
+        "stream": "Career center licensing",
+        "model": "B2B licensing",
+        "description": "Annual campus-wide license"
+      }
+    ],
+    "gtm_phases": [
+      {
+        "phase": "Pilot",
+        "strategy": "Partner with student advisors",
+        "target": "One campus"
+      }
+    ],
+    "customer_acquisition_strategy": {
+      "primary_channel": "Campus partnerships"
+    },
+    "value_delivered_to_customer": "Lower time spent screening roles"
+  },
+  "pricing_strategy": {
+    "pricing_rationale": "Charge career centers instead of students.",
+    "tiers": [
+      {
+        "tier_name": "Campus Pilot",
+        "price_monthly_usd": 125,
+        "price_annual_usd": 1400,
+        "target_persona": "Campus career centers"
+      }
+    ]
+  },
+  "financial_projections": {
+    "assumptions": {
+      "paid_campuses_month_12": 12
+    },
+    "monthly_projections": [
+      {
+        "month": 1,
+        "total_customers": 1,
+        "mrr_usd": 125,
+        "net_profit_usd": -675
+      },
+      {
+        "month": 2,
+        "total_customers": 2,
+        "mrr_usd": 250,
+        "net_profit_usd": -550
+      },
+      {
+        "month": 3,
+        "total_customers": 3,
+        "mrr_usd": 375,
+        "net_profit_usd": -425
+      },
+      {
+        "month": 4,
+        "total_customers": 4,
+        "mrr_usd": 500,
+        "net_profit_usd": -300
+      },
+      {
+        "month": 5,
+        "total_customers": 5,
+        "mrr_usd": 625,
+        "net_profit_usd": -175
+      },
+      {
+        "month": 6,
+        "total_customers": 6,
+        "mrr_usd": 750,
+        "net_profit_usd": -50
+      },
+      {
+        "month": 7,
+        "total_customers": 7,
+        "mrr_usd": 875,
+        "net_profit_usd": 75
+      },
+      {
+        "month": 8,
+        "total_customers": 8,
+        "mrr_usd": 1000,
+        "net_profit_usd": 200
+      },
+      {
+        "month": 9,
+        "total_customers": 9,
+        "mrr_usd": 1125,
+        "net_profit_usd": 325
+      },
+      {
+        "month": 10,
+        "total_customers": 10,
+        "mrr_usd": 1250,
+        "net_profit_usd": 450
+      },
+      {
+        "month": 11,
+        "total_customers": 11,
+        "mrr_usd": 1375,
+        "net_profit_usd": 575
+      },
+      {
+        "month": 12,
+        "total_customers": 12,
+        "mrr_usd": 1500,
+        "net_profit_usd": 700
+      }
+    ],
+    "breakeven_month": 7,
+    "arr_month_12_usd": 18000,
+    "ltv_usd": null,
+    "cac_usd": null,
+    "ltv_cac_ratio": null,
+    "key_assumptions_note": "One new campus per month is an assumption."
+  },
+  "risk_register": {
+    "risks": [
+      {
+        "risk_id": "R-01",
+        "title": "Incomplete schedule verification",
+        "probability": "medium",
+        "impact": "high",
+        "mitigation_strategy": "Review each employer-submitted schedule."
+      }
+    ]
+  },
+  "tech_architecture": {
+    "architecture_description": "A queue validates employer metadata asynchronously.",
+    "frontend_stack": {
+      "framework": "React",
+      "styling": "CSS"
+    },
+    "backend_stack": {
+      "framework": "FastAPI",
+      "language": "Python"
+    },
+    "database": {
+      "primary": "PostgreSQL"
+    },
+    "ai_layer": {
+      "primary_llm": "Groq"
+    }
+  },
+  "database_schema": {
+    "sql_schema": "CREATE TABLE verified_roles (id UUID PRIMARY KEY);",
+    "entities": [
+      {
+        "entity": "verified_roles",
+        "purpose": "Store verified internships."
+      }
+    ],
+    "relationships": []
+  },
+  "security_compliance": {
+    "owasp_top10_checklist": [
+      {
+        "item": "Access control",
+        "status": "required",
+        "action": "Enforce campus-scoped access."
+      }
+    ],
+    "compliance_requirements": [],
+    "security_launch_checklist": [
+      "Review cross-campus access."
+    ]
+  },
+  "pitch_deck": [
+    {
+      "slide_number": 1,
+      "title": "A Verified Internship Gap",
+      "headline": "Scheduling evidence matters",
+      "bullet_points": [
+        "Verify hours before applying."
+      ],
+      "speaker_notes": "Describe the schedule verification workflow."
+    },
+    {
+      "slide_number": 2,
+      "title": "Schedule Matching",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 3,
+      "title": "Market Estimate",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 4,
+      "title": "Role Discovery",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 5,
+      "title": "Campus Licensing",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 6,
+      "title": "Pilot Roadmap",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 7,
+      "title": "Competitive Alternatives",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 8,
+      "title": "Team Roles",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 9,
+      "title": "Financial Projections",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 10,
+      "title": "Pilot Request",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 11,
+      "title": "Campus Network",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    },
+    {
+      "slide_number": 12,
+      "title": "Assumptions",
+      "headline": "Pilot hypothesis",
+      "bullet_points": [
+        "Validate with the campus pilot."
+      ],
+      "speaker_notes": ""
+    }
+  ],
+  "executive_summary": {
+    "executive_summary": "Campus Bridge connects busy students to verified flexible internships. The campus pilot will measure whether schedule visibility improves application completion.",
+    "one_liner": "Find internships with verified flexible schedules.",
+    "elevator_pitch": "Help campus career centers verify internship schedules at scale.",
+    "key_metrics_snapshot": {
+      "break_even": "Month 7",
+      "arr": "$18,000 projected"
+    }
+  }
+}

@@ -52,9 +52,9 @@ async def fetch_fred_data(series_ids: list[str] | None = None, caller: str = "")
                         label = FRED_SERIES.get(sid, sid)
                         lines.append(f"- {label}: {val} (as of {date})")
                 except Exception as e:
-                    logger.debug(f"FRED series {sid} failed: {e}")
+                    logger.debug(f"FRED series {sid} failed: {type(e).__name__}")
     except Exception as e:
-        logger.warning(f"📊 FRED: FAILED — {e}")
+        logger.warning(f"FRED failed: {type(e).__name__}")
         return ""
 
     if not lines:

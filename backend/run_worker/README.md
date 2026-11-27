@@ -1,10 +1,10 @@
-# PostgreSQL run worker slice
+# PostgreSQL run worker
 
-This implements a four-step fake workflow behind the merged v1 payload models. PostgreSQL stores the authoritative snapshot, immutable artifacts, ordered events, submission identity, and expiring claim. The API process only queues work. Run a separate worker process to execute it.
+Live mode queues the 16 existing Groq-backed agents under the `live-startup-v1` manifest. Fake mode queues the deterministic four-step demonstration. PostgreSQL stores the authoritative snapshot, immutable artifacts, ordered events, submission identity, and expiring claim. Run a separate worker process to execute queued work.
 
 ## Scope and contract follow-up
 
-The v1 API supports submission, snapshots, event replay, both artifact reads, owner-scoped history, and Markdown, PDF, and PPTX downloads. History uses the contract's descending `(created_at, run_id)` order and opaque cursor. Review decisions remain integration work. This fake manifest has no review gate and records `not_evaluated` evaluations.
+The v1 API supports submission, snapshots, event replay, both artifact reads, owner-scoped history, and Markdown, PDF, and PPTX downloads. History uses the contract's descending `(created_at, run_id)` order and opaque cursor. Review decisions and quality evaluations remain integration work. Published evaluation records indicate `not_evaluated`.
 
 The following additions require a separate shared-contract PR before Surya integrates authentication and submission retries.
 
@@ -20,34 +20,27 @@ The additive schema migration is explicit and safe to repeat. Apply it before st
 
 A claim uses SELECT FOR UPDATE SKIP LOCKED, a random claim token, and a 30-second expiry measured by the database clock. Each mutation locks the run row, validates the token and expiry, then validates expiry again at the final snapshot update. A stale attempt rolls back its artifact, status, and events together. While providers are active, the coordinator waits at most one third of the lease duration before its next renewal. If the worker stops renewing, another worker can reclaim the run and recompute interrupted steps. Completed steps are recovered from PostgreSQL and skipped. Provider call deadlines remain separate from the worker lease.
 
-Each step completion inserts one immutable artifact, updates step state, appends artifact/step/evaluation events, and updates the snapshot in one transaction. Retrying the same artifact and content during an active claim returns the original artifact without new events. Different content conflicts. Per-run row locking serializes event allocation, and rolled-back transactions leave no event ID gaps. Terminal status has its own atomic snapshot/event transaction. A crash before that transaction is recovered by the next claim. Expected fake-provider failures produce partial or failed results with sanitized errors.
+Each step completion inserts one immutable artifact, updates step state, appends artifact/step/evaluation events, and updates the snapshot in one transaction. Retrying the same artifact and content during an active claim returns the original artifact without new events. Different content conflicts. Per-run row locking serializes event allocation, and rolled-back transactions leave no event ID gaps. Terminal status has its own atomic snapshot/event transaction. A crash before that transaction is recovered by the next claim. Provider failures produce partial or failed results with sanitized errors.
 
-New runs use the `fake-business-v2` manifest. The claiming worker schedules up to two provider calls concurrently and publishes results through its fenced transactions. Pricing and risk can overlap after business model commits. Financials can start as soon as business model and pricing commit. The worker can resume stored v1 manifests using their original dependency lists.
+The claiming worker schedules up to `V1_STEP_CONCURRENCY` steps per run, with a default of two and a permitted range of one to eight. Market and competitor research can overlap. Pricing and risk can overlap after business model commits and any optional inputs settle. Financials waits for the committed business model and pricing artifacts. Other dependencies are in `workflow.py`. Registration and execution reject missing dependencies and cycles.
 
-The manifest version stored at submission selects the optional inputs and output models in `workflow.py` for every attempt. Workers claim runs only for versions they support. When changing a step contract, add a workflow version and retain the old specification and model classes so existing runs can finish. Required inputs come from the stored manifest and must have a succeeded step and committed artifact. Optional inputs are passed when available at step start and never delay execution.
+The manifest version stored at submission selects the provider, optional inputs, and output models for every attempt. Live workers claim only `live-startup-v1`. Fake workers can drain either historical fake manifest. Drain existing queued fake runs before switching a queue to live, or run a separate explicitly configured fake worker in a development environment. When changing a step contract, add a workflow version and retain the old specification and model classes so existing runs can finish. The live scheduler waits for optional producers to settle, then supplies their artifacts only if they completed successfully. A failed optional producer does not block its consumer. Required inputs come from the stored manifest and must have a succeeded step and committed artifact.
 
-A provider returns structured content on success, or `PartialOutput(content)` for usable but incomplete work. The worker validates either payload before publication. Invalid content fails the step with `invalid_output` and publishes no artifact. A failed, partial, or skipped required upstream makes its dependent step `skipped` with error code `dependency_blocked`. Independent steps continue. The final run is partial when required work is incomplete and artifacts are available, or failed when required work is incomplete and no artifacts are available. The existing SSE reducer and UI can read these statuses and artifact quality values.
+Each live step uses the existing agent's research tools, prompt builder, and parser with a new private context hydrated from committed inputs. It never calls the legacy retry-and-fallback runner. Validated JSON is the only path to successful publication. SerpAPI and FRED evidence is persisted separately from model estimates in `tool_evidence`, and `analysis_basis` records whether such evidence was available. Financial assumptions retain their existing `assumptions` field. These labels do not independently verify model claims.
+
+A provider returns structured content on success, or `PartialOutput(content)` for usable but incomplete work. The worker validates either payload before publication. Invalid content fails the step with `invalid_output` and publishes no artifact. A failed, partial, or skipped required upstream makes its dependent step `skipped` with error code `dependency_blocked`. Independent steps continue. The final run is partial when required work is incomplete and artifacts are available, or failed when required work is incomplete and no artifacts are available.
 
 ## Proposed follow-up PRs
 
-1. Migrate pricing first using the existing pricing agent's prompt builder and parser with the Python worker and LLM adapter. Freeze the prompt and model profile version per run and exercise the mapping with a deterministic adapter double. Migrate business model, risk, and financials incrementally as their input and output shapes are verified.
-2. Make the adapter own model retries and per-call deadlines. Cover timeouts, rate limits, Retry-After, bounded exponential backoff with jitter, and invalid responses using a fake clock and provider. Keep database transaction/reclaim handling separate.
-3. Add capability-compatible fallback and a durable run budget. Record attempts, actual model, token use, and estimated cost across worker restarts. Test exhaustion before fallback or another request.
-4. Add versioned task-completion and domain checks, followed by grounding and relevance checks on labeled evidence fixtures. Publish evaluation outcomes through the existing evaluation event. Run deterministic regressions in CI and offer separately enabled, budget-limited live evaluations.
-5. Persist immutable artifact revisions and implement one target-pricing review gate. Bind approvals to the exact revision, persist the decision and event atomically, and resume financials from the approved pricing artifact after retries or reclaim. Cross-review new revision fields and fixtures with Surya.
+1. Freeze the prompt and model profile version per run. Harden provider retries and fallback with bounded backoff, Retry-After, durable cost reservations, and attempt accounting.
+2. Add task-completion, grounding, and relevance checks on labeled evidence fixtures. Publish evaluation outcomes through the existing evaluation event and run deterministic regressions in CI.
+3. Persist immutable artifact revisions and implement one target-pricing review gate. Bind approvals to the exact revision, persist the decision and event atomically, and resume financials from the approved pricing artifact after retries or reclaim.
 
 Each provider attempt runs in a spawned child process. Use an importable provider callable and initialize any network client in the child. The worker enforces a wall-clock deadline configured by `V1_PROVIDER_TIMEOUT_SECONDS` (default 120 seconds). On timeout it terminates and joins the child, records `provider_timeout` for the step, and continues independent work. When renewal or publication detects claim loss, the coordinator terminates its active provider children before joining the executor threads. A remote provider may still complete a request already sent, so adapter-side request deadlines and retry budgets remain relevant.
 
-## Dependency finding
+## React integration
 
-The ZIP was not available in this checkout. Inspection confirms the described issue in these files.
-
-- `backend/agents/layer2/agent8_pricing.py` reads `ctx.business_model`.
-- `backend/agents/layer2/agent9_financials.py` reads `ctx.business_model` and `ctx.pricing_strategy`.
-- `backend/agents/layer2/agent10_risk.py` reads `ctx.business_model`.
-- `backend/orchestrator.py` launches business model, pricing, financials, and risk together through asyncio.gather in phase 2.
-
-The fixture at `backend/tests/fixtures/business_dependencies.json` expresses those dependencies. Tests cover rejected early financial starts, an uncommitted pricing transaction, and a manifest whose display order opposes dependency order. Full live-agent migration remains a follow-up PR.
+The existing v1 OpenAPI and SSE schemas already support variable-length manifests and arbitrary JSON artifact content. In live mode, derive labels, phase groups, and required dependency edges from the run's 16-step manifest. Each step's ID is also its artifact kind. `problem_refined` is an object carrying a `problem_refined` string, `customer_personas` is an array, and `pitch_deck` carries a `slides` array. The Groq response fixture in `backend/tests/fixtures/live_agent_outputs.json` exercises the original response shapes before normalization. Existing fake runs still have four steps. V1 exports render committed live content and include partial-result notices when steps fail. PPTX includes the generated slides and speaker notes when available.
 
 ## Local setup
 
@@ -58,7 +51,13 @@ DATABASE_URL=postgresql://<user>:<password>@localhost:5432/<database>
 V1_JWT_SECRET=<random-secret-at-least-32-characters>
 V1_JWT_ISSUER=cofounder-agent
 V1_JWT_AUDIENCE=cofounder-api
+V1_PROVIDER_MODE=live
+GROQ_API_KEY=<approved-groq-key>
+SERPAPI_API_KEY=<optional-search-key>
+FRED_API_KEY=<optional-macro-data-key>
 ```
+
+Use the same mode and database in the API and worker. Set `V1_PROVIDER_MODE=fake` explicitly for a provider-free demonstration in development. An unset mode, fake mode in production, or a missing live Groq key prevents v1 submission and worker startup. With optional research keys omitted, agents can still run and record that they lacked external evidence. The legacy FastAPI routes retain their existing behavior and access rules.
 
 From the repository root in PowerShell, install dependencies, migrate, and start the API.
 
@@ -102,11 +101,11 @@ The tests use standard-library unittest and a real PostgreSQL database. TEST_DAT
 
 ```powershell
 $env:TEST_DATABASE_URL = 'postgresql://<test-user>:<test-password>@localhost:5432/<test-database>'
-.\.venv\Scripts\python.exe -m unittest backend.tests.test_run_worker -v
+.\.venv\Scripts\python.exe -m unittest discover -s backend/tests -v
 .\.venv\Scripts\python.exe -m backend.contracts.tool --check
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-Coverage includes concurrent duplicate submission, payload conflicts, owner-scoped keys, concurrent worker claims, restart/reclaim fencing, rollback between artifact/event publication, lease expiry during commit, immutable artifact retry, committed dependency reads, separate worker process execution, replay at every cursor, live streaming, owner isolation, JWT rejection, partial/failed results, all three export formats, and legacy route registration. Legacy live-provider execution and production Supabase connectivity require environment-specific integration checks.
+The 16-agent integration uses the real scheduler, subprocess boundary, agent prompts and parsers, and the Groq adapter with deterministic transport doubles. It checks committed dependency reads, parallel scheduling, evidence, replay, recovery, owner isolation, partial failures, and report content. Provider-free verification does not measure live output quality, cost, or latency. Use approved credentials and a bounded workload before attempting live verification.
 
 Before staging, configure a trusted token issuer, the database connection, secret handling, and the frontend's bearer/SSE integration. The legacy demo routes retain their existing access behavior and need a separate staging exposure decision. No deployment is performed by these commands.

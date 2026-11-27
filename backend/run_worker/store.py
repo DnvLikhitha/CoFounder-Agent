@@ -56,10 +56,10 @@ class Store:
             connection.execute("SELECT pg_advisory_xact_lock(71894021)")
             connection.execute(Path(__file__).with_name("schema.sql").read_text())
 
-    def submit(self, owner, key, body):
+    def submit(self, owner, key, body, *, version=None):
         with self.connect() as connection:
             timestamp, run_id = now(connection), str(uuid4())
-            manifest = workflow.current_manifest()
+            manifest = workflow.current_manifest(version)
             snapshot = dict(contract_version="1.0", run_id=run_id, input=body,
                             status="queued", created_at=timestamp, updated_at=timestamp,
                             completed_at=None, error=None, last_event_id=0,
@@ -141,7 +141,7 @@ class Store:
         snapshot.update(data)
         self._emit(connection, snapshot, "run.updated", data, timestamp)
 
-    def claim(self, lease_seconds=30):
+    def claim(self, lease_seconds=30, *, versions=None):
         if lease_seconds <= 0:
             raise ValueError("Lease must be positive")
         with self.connect() as connection:
@@ -150,7 +150,7 @@ class Store:
                    AND snapshot->'manifest'->>'version' = ANY(%s)
                    AND (lease_until IS NULL OR lease_until <= clock_timestamp())
                    ORDER BY created_at, run_id FOR UPDATE SKIP LOCKED LIMIT 1""",
-                (list(workflow.WORKFLOWS),)).fetchone()
+                (list(workflow.WORKFLOWS if versions is None else versions),)).fetchone()
             if row is None:
                 return None
             token, snapshot = str(uuid4()), row["snapshot"]
@@ -196,7 +196,8 @@ class Store:
 
     def workflow(self, run_id, token):
         with self._claimed(run_id, token) as (connection, snapshot):
-            return snapshot["manifest"]["steps"], {s["step_id"]: s["status"] for s in snapshot["steps"]}
+            manifest = snapshot["manifest"]
+            return manifest["version"], manifest["steps"], {s["step_id"]: s["status"] for s in snapshot["steps"]}
 
     def begin_step(self, run_id, token, step_id):
         with self._claimed(run_id, token) as (connection, snapshot):
@@ -258,9 +259,11 @@ class Store:
                          retryable=False) if partial else None
             step.update(status="partial" if partial else "succeeded", completed_at=timestamp, error=error)
             self._emit(connection, snapshot, "step.updated", step, timestamp)
+            evaluator = "worker" if snapshot["manifest"]["version"] == workflow.LIVE_VERSION else "fake-provider"
+            reason = "No quality evaluator is configured." if evaluator == "worker" else "Fake workflow has no quality evaluator."
             evaluation = dict(evaluation_id=f"{step_id}-evaluation", step_id=step_id, artifact_id=step_id,
-                              evaluator="fake-provider", evaluator_version="1", outcome="not_evaluated",
-                              score=None, reasons=["Fake workflow has no quality evaluator."], created_at=timestamp)
+                              evaluator=evaluator, evaluator_version="1", outcome="not_evaluated",
+                              score=None, reasons=[reason], created_at=timestamp)
             snapshot["evaluations"].append(evaluation)
             self._emit(connection, snapshot, "evaluation.completed", evaluation, timestamp)
             return artifact
