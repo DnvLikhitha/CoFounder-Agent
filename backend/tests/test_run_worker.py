@@ -26,7 +26,22 @@ from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot
 from backend.run_worker.api import app, store
 from backend.run_worker.store import LostClaim, Store, StoreError
 from backend.run_worker.worker import execute_claim
-from backend.run_worker.workflow import DEPENDENCIES, InvalidOutput, PartialOutput, ProviderFailure, fake_provider
+from backend.run_worker.workflow import (
+    DEPENDENCIES, InvalidOutput, PartialOutput, ProviderFailure, fake_provider, validate_output,
+)
+
+
+class PricingValidationTests(unittest.TestCase):
+    def test_json_prices_accept_finite_numbers(self):
+        for value, accepted in [(10, True), (10.25, True), (True, False), ("10", False),
+                                (float("inf"), False), (float("nan"), False)]:
+            with self.subTest(value=value):
+                content = {"tiers": [{"tier_name": "Starter", "price_monthly_usd": value}]}
+                if accepted:
+                    validate_output("pricing_strategy", content)
+                else:
+                    with self.assertRaises(InvalidOutput):
+                        validate_output("pricing_strategy", content)
 
 
 class WorkerIntegrationTests(unittest.TestCase):
@@ -140,6 +155,32 @@ class WorkerIntegrationTests(unittest.TestCase):
             self.database.complete_step(*claim, "business_model", {"different": True})
         ids = [event["event_id"] for event in self.database.events("alice", run_id, 0)]
         self.assertEqual(ids, list(range(1, checkpoint["last_event_id"] + 1)))
+
+    def test_slow_provider_keeps_claim_past_its_original_expiry(self):
+        run_id = self.submit()["run_id"]
+        lease_seconds = 2
+        claim = self.database.claim(lease_seconds)
+        started, release = Event(), Event()
+
+        def slow_provider(step_id, body, upstream):
+            if step_id == "business_model":
+                started.set()
+                if not release.wait(15):
+                    raise RuntimeError("Test provider timed out")
+            return fake_provider(step_id, body, upstream)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            worker = pool.submit(execute_claim, self.database, claim, slow_provider, lease_seconds)
+            try:
+                self.assertTrue(started.wait(10))
+                time.sleep(lease_seconds + 0.5)
+                self.assertIsNone(Store(self.dsn).claim())
+            finally:
+                release.set()
+            worker.result(timeout=15)
+        snapshot = self.database.snapshot("alice", run_id)
+        self.assertEqual(snapshot["status"], "succeeded")
+        self.assertTrue(all(step["attempt"] == 1 for step in snapshot["steps"]))
 
     def test_lease_expiring_during_commit_rolls_back(self):
         run_id = self.submit()["run_id"]

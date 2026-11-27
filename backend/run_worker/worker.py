@@ -37,7 +37,8 @@ def execute_claim(store, claim, provider=fake_provider, lease_seconds=30):
                 if pending and not any(set(s["depends_on"]) <= finished for s in pending):
                     raise ValueError("Workflow contains an unsatisfied dependency")
                 continue
-            done, _ = wait(active, return_when=FIRST_COMPLETED)
+            # Wake the coordinator to renew even when every provider is still busy.
+            done, _ = wait(active, timeout=lease_seconds / 3, return_when=FIRST_COMPLETED)
             for future in done:
                 step_id = active.pop(future)
                 try:
