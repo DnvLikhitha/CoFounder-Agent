@@ -6,12 +6,16 @@ import partialSnapshot from '../../../shared/contracts/fixtures/partial/snapshot
 import partialFinal from '../../../shared/contracts/fixtures/partial/final.json'
 import partialArtifacts from '../../../shared/contracts/fixtures/partial/artifacts.json'
 import partialEvents from '../../../shared/contracts/fixtures/partial/events.jsonl?raw'
+import artifactDetails from '../fixtures/artifact-details.json'
 
 export const fixtures = {
   succeeded: {
     snapshot: succeededSnapshot,
     final: succeededFinal,
-    artifacts: succeededArtifacts,
+    artifacts: succeededArtifacts.map((artifact) => {
+      const details = artifactDetails[artifact.reference.artifact_id]
+      return details ? { ...artifact, content: { ...artifact.content, ...details } } : artifact
+    }),
     events: parseJsonLines(succeededEvents),
   },
   partial: {

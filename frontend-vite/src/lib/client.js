@@ -6,6 +6,7 @@
  *
  * streamEvents resolves at EOF and rejects on transport/protocol errors.
  * Its options include after (the applied cursor), onOpen and onFrame.
+ * The mock review preview accepts expectedArtifactIds in its request options.
  */
 export class ApiError extends Error {
   constructor(message, { status, code, retryable } = {}) {

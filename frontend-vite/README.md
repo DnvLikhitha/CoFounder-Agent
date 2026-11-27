@@ -12,7 +12,7 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-Open the URL printed by Vite, usually `http://localhost:5173`. On macOS or Linux, use `npm` in the commands. Mock mode starts by default. Choose a success or partial-results scenario, submit the form, then approve the review. History also contains completed examples of both scenarios. Mock runs persist in the browser's local storage for this origin, so use sample problem statements.
+Open the URL printed by Vite, usually `http://localhost:5173`. On macOS or Linux, use `npm` in the commands. Mock mode starts by default. Submit a success or partial-results scenario to exercise the review. The success fixture includes an example source and assumption. Use **Approve** to resume over SSE, or **Request revision** to preview submitting feedback against the current checkpoint and its artifact IDs. History also contains completed examples of both scenarios. Mock runs persist in the browser's local storage for this origin, so use sample problem statements.
 
 For live mode, start both the FastAPI API and the separate PostgreSQL worker. Follow the [worker setup and local token instructions](../backend/run_worker/README.md#local-setup), then run:
 
@@ -37,6 +37,12 @@ Both builds write to `dist/`. The live build needs same-origin routing for `/api
 
 ## Integration
 
-- The history UI follows the v1 opaque cursor. The current worker slice has no history or review-decision handler. The demo fixtures and locally submitted mock runs are browser-local. Legacy deletion is deferred from v1.
+- Live history follows the worker's v1 opaque cursor. The worker does not yet emit founder checkpoints or accept review decisions. The shared v1 review route uses `review_id` and accepts `approve` or `reject`, with optional feedback. The frontend sends either decision using the v1 payload and waits for SSE to update the run. An HTTP 409 refreshes the snapshot and reloads the active checkpoint.
 - The live UI downloads Markdown, PDF, and PowerPoint for succeeded and partial runs. The worker produces demonstration exports from the fake workflow. Mock mode supplies artifact content and references.
 - The live client uses the shared snapshot and SSE schemas to check run state. Bearer authentication follows the worker's documented runtime behavior. Authentication and token renewal still need cross-review for the shared contract and staging.
+
+### Shared contract follow-ups
+
+- Artifact detail validates the v1 payload and uses the immutable `artifact_id` to show the exact revision. Evidence and assumptions in the generic JSON body are optional conventions. Agree on typed source references, assumption identifiers, and revision metadata before relying on them across producers.
+- The UI shows each evaluation record's own outcome, score and reasons. Agree on dimension IDs, labels and missing-score semantics for evaluations that report several dimensions in one record.
+- Agree on a checkpoint/revision precondition, an explicit revise action, and the resulting receipt and SSE transitions. The mock preview checks the checkpoint and artifact IDs without changing v1 events. It records a revision request and leaves that checkpoint pending. The current API cannot submit an explicit revision precondition or process a revision request.

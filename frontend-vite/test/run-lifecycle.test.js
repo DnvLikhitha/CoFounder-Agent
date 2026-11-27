@@ -4,7 +4,8 @@ import { test } from 'node:test'
 import { createParser } from 'eventsource-parser'
 import { createLiveClient } from '../src/lib/live-client.js'
 import { createMockClient } from '../src/lib/mock-client.js'
-import { applyFrame, checkSnapshot, ProtocolError, toFrame } from '../src/lib/run-state.js'
+import { applyFrame, checkArtifact, checkSnapshot, ProtocolError, toFrame } from '../src/lib/run-state.js'
+import { readEvidence } from '../src/lib/artifact-details.js'
 import { watchRun } from '../src/lib/watch-run.js'
 
 function loadFixtures(scenario) {
@@ -22,6 +23,41 @@ function loadFixtures(scenario) {
 
 const fixtures = { succeeded: loadFixtures('succeeded'), partial: loadFixtures('partial') }
 const scenarios = Object.entries(fixtures)
+
+test('loads exact v1 artifact revisions and handles missing or unsafe evidence', () => {
+  const { snapshot, artifacts } = fixtures.partial
+  const research = artifacts[0]
+  assert.equal(checkArtifact(research, snapshot.run_id, research.reference), research)
+  assert.throws(() => checkArtifact(research, fixtures.succeeded.snapshot.run_id, research.reference), ProtocolError)
+  assert.throws(() => checkArtifact(research, snapshot.run_id, { ...research.reference, artifact_id: 'other' }), ProtocolError)
+  assert.deepEqual(readEvidence(research.content), { sources: [], assumptions: [] })
+  const evidence = readEvidence({
+    assumptions: { year_one: 0 },
+    sources: [{ title: 'Unsafe', url: 'javascript:alert(1)' }, { title: 'Survey', url: 'https://example.org/survey' }],
+    tool_evidence: { serpapi_sources: ['Survey | https://example.org/survey'] },
+  })
+  assert.deepEqual(evidence.assumptions, [{ label: 'year one', value: 0 }])
+  assert.equal(evidence.sources.length, 2)
+  assert.equal(evidence.sources[0].url, null)
+  assert.deepEqual(evidence.sources[1], { label: 'Survey', url: 'https://example.org/survey' })
+})
+
+test('live approval and rejection send the v1 payload; revision stays local', async () => {
+  const { snapshot } = fixtures.succeeded
+  const payload = { decision_id: '10000000-0000-4000-8000-000000000003', decision: 'approve', comment: null }
+  const calls = []
+  const client = createLiveClient(async (url, options) => {
+    calls.push({ url, payload: JSON.parse(options.body) })
+    return Response.json({})
+  })
+  await client.decideReview(snapshot.run_id, 'review-1', payload, { expectedArtifactIds: ['research'] })
+  const rejection = { ...payload, decision_id: '10000000-0000-4000-8000-000000000005', decision: 'reject' }
+  await client.decideReview(snapshot.run_id, 'review-1', rejection, { expectedArtifactIds: ['research'] })
+  await assert.rejects(client.decideReview(snapshot.run_id, 'review-1', { ...payload, decision: 'revise' }),
+    { status: 422 })
+  const url = `/api/v1/runs/${snapshot.run_id}/reviews/review-1/decisions`
+  assert.deepEqual(calls, [{ url, payload }, { url, payload: rejection }])
+})
 
 test('authenticated client includes a bearer token on REST, events, and downloads', async () => {
   const { snapshot, artifacts, wire } = fixtures.succeeded
@@ -229,6 +265,16 @@ test('mock runs survive a reload at review and retain partial artifacts after ap
   const awaiting = await reloaded.getRun(runId)
   assert.equal(checkSnapshot(awaiting, runId).status, 'awaiting_review')
   assert.equal(awaiting.last_event_id, 7)
+  const revision = { decision_id: '10000000-0000-4000-8000-000000000004', decision: 'revise', comment: 'Add survey evidence.' }
+  await assert.rejects(reloaded.decideReview(runId, awaiting.pending_review.review_id, revision, {
+    expectedArtifactIds: ['stale-revision'],
+  }), { status: 409 })
+  const preview = await reloaded.decideReview(runId, awaiting.pending_review.review_id, revision, {
+    expectedArtifactIds: awaiting.pending_review.artifact_ids,
+  })
+  assert.deepEqual(preview.artifact_ids, ['research'])
+  assert.deepEqual(mock.getRevisionPreview(runId, awaiting.pending_review.review_id), preview)
+  assert.deepEqual(await reloaded.getRun(runId), awaiting)
   const decision = { decision_id: '10000000-0000-4000-8000-000000000002', decision: 'approve', comment: null }
   const receipt = await reloaded.decideReview(runId, awaiting.pending_review.review_id, decision)
   assert.equal(receipt.event_id, 8)
