@@ -37,7 +37,7 @@ Both builds write to `dist/`. The live build needs same-origin routing for `/api
 
 ## Integration
 
-- Live history follows the worker's v1 opaque cursor. The worker does not yet emit founder checkpoints or accept review decisions. The shared v1 review route uses `review_id` and only accepts `approve` or `reject`, with optional feedback. The frontend sends that exact approval payload. An HTTP 409 refreshes the snapshot and reloads the active checkpoint.
+- Live history follows the worker's v1 opaque cursor. The worker does not yet emit founder checkpoints or accept review decisions. The shared v1 review route uses `review_id` and accepts `approve` or `reject`, with optional feedback. The frontend sends either decision using the v1 payload and waits for SSE to update the run. An HTTP 409 refreshes the snapshot and reloads the active checkpoint.
 - The live UI downloads Markdown, PDF, and PowerPoint for succeeded and partial runs. The worker produces demonstration exports from the fake workflow. Mock mode supplies artifact content and references.
 - The live client uses the shared snapshot and SSE schemas to check run state. Bearer authentication follows the worker's documented runtime behavior. Authentication and token renewal still need cross-review for the shared contract and staging.
 

@@ -3,6 +3,12 @@ import { Assumptions } from './OutputSection.jsx'
 import { readEvidence } from './lib/artifact-details.js'
 import { useArtifact } from './lib/use-artifact.js'
 
+const decisionLabels = {
+  approve: 'approval',
+  reject: 'rejection',
+  revise: 'revision request',
+}
+
 export function FounderReview({ review, artifacts, client, runId, onStale, onViewArtifact }) {
   const pending = useRef(null)
   const submission = useRef(null)
@@ -34,7 +40,7 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
         setRevisionComment(null)
         setState({ status: 'revision-requested' })
       } else {
-        setState({ status: 'submitted' })
+        setState({ status: 'submitted', decision })
       }
     } catch (error) {
       if (request.signal.aborted) return
@@ -69,6 +75,7 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
       {canAct && revisionComment === null && (
         <div className="actions">
           <button className="primary" onClick={() => submit('approve')}>Approve</button>
+          <button onClick={() => submit('reject')}>Reject</button>
           {canRevise && <button onClick={() => setRevisionComment('')}>Request revision</button>}
           {!client.supportsRevisionPreview && <span className="muted">Revision requests are unavailable in v1.</span>}
         </div>
@@ -85,10 +92,13 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
         </form>
       )}
       {state.status === 'retry' && (
-        <button onClick={() => submit(state.decision)}>Retry {state.decision === 'approve' ? 'approval' : 'revision request'}</button>
+        <button onClick={() => submit(state.decision)}>Retry {decisionLabels[state.decision]}</button>
       )}
       {state.status === 'sending' && <p role="status">Sending decision…</p>}
-      {state.status === 'submitted' && <p role="status">Approval submitted. Waiting for the run to resume…</p>}
+      {state.status === 'submitted' && <p role="status">
+        {state.decision === 'reject' ? 'Rejection submitted. Waiting for the final run status…'
+          : 'Approval submitted. Waiting for the run to resume…'}
+      </p>}
     </section>
   )
 }

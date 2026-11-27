@@ -42,19 +42,21 @@ test('loads exact v1 artifact revisions and handles missing or unsafe evidence',
   assert.deepEqual(evidence.sources[1], { label: 'Survey', url: 'https://example.org/survey' })
 })
 
-test('live approval sends the v1 payload and rejects the draft revision action locally', async () => {
+test('live approval and rejection send the v1 payload; revision stays local', async () => {
   const { snapshot } = fixtures.succeeded
   const payload = { decision_id: '10000000-0000-4000-8000-000000000003', decision: 'approve', comment: null }
   const calls = []
   const client = createLiveClient(async (url, options) => {
-    calls.push(url)
-    assert.deepEqual(JSON.parse(options.body), payload)
+    calls.push({ url, payload: JSON.parse(options.body) })
     return Response.json({})
   })
   await client.decideReview(snapshot.run_id, 'review-1', payload, { expectedArtifactIds: ['research'] })
+  const rejection = { ...payload, decision_id: '10000000-0000-4000-8000-000000000005', decision: 'reject' }
+  await client.decideReview(snapshot.run_id, 'review-1', rejection, { expectedArtifactIds: ['research'] })
   await assert.rejects(client.decideReview(snapshot.run_id, 'review-1', { ...payload, decision: 'revise' }),
     { status: 422 })
-  assert.deepEqual(calls, [`/api/v1/runs/${snapshot.run_id}/reviews/review-1/decisions`])
+  const url = `/api/v1/runs/${snapshot.run_id}/reviews/review-1/decisions`
+  assert.deepEqual(calls, [{ url, payload }, { url, payload: rejection }])
 })
 
 test('authenticated client includes a bearer token on REST, events, and downloads', async () => {
