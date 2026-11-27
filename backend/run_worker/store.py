@@ -1,13 +1,15 @@
 """Transactions serialize each run and atomically publish its state and events."""
+from base64 import b64decode, urlsafe_b64encode
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot
+from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot, RunSummary
 from backend.run_worker.workflow import MANIFEST
 
 TERMINAL = {"succeeded", "partial", "failed"}
@@ -25,6 +27,18 @@ class LostClaim(Exception):
 
 def now(connection):
     return connection.execute("SELECT clock_timestamp() AS now").fetchone()["now"].isoformat()
+
+
+def decode_history_cursor(cursor):
+    try:
+        value = b64decode(cursor, altchars=b"-_", validate=True).decode("ascii")
+        timestamp, run_id = value.split("|")
+        timestamp = datetime.fromisoformat(timestamp)
+        if timestamp.utcoffset() is None:
+            raise ValueError("Cursor timestamp needs an offset")
+        return timestamp, UUID(run_id)
+    except ValueError:
+        raise StoreError(422, "validation_error", "Invalid history cursor") from None
 
 
 class Store:
@@ -73,6 +87,25 @@ class Store:
             if row is None:
                 raise StoreError(404, "not_found", "Run not found")
             return row["snapshot"]
+
+    def history(self, owner, limit, cursor):
+        timestamp, run_id = decode_history_cursor(cursor) if cursor is not None else (None, None)
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT created_at, run_id, snapshot FROM v1_runs WHERE owner_id=%s
+                   AND (%s::timestamptz IS NULL OR (created_at, run_id) < (%s, %s))
+                   ORDER BY created_at DESC, run_id DESC LIMIT %s""",
+                (owner, timestamp, timestamp, run_id, limit + 1)).fetchall()
+        page = rows[:limit]
+        next_cursor = None
+        if len(rows) > limit:
+            last = page[-1]
+            boundary = f'{last["created_at"].isoformat()}|{last["run_id"]}'
+            next_cursor = urlsafe_b64encode(boundary.encode("ascii")).decode("ascii")
+        return {
+            "runs": [{name: row["snapshot"][name] for name in RunSummary.model_fields} for row in page],
+            "next_cursor": next_cursor,
+        }
 
     def artifact(self, owner, run_id, artifact_id):
         with self.connect() as connection:

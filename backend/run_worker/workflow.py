@@ -24,7 +24,7 @@ def fake_provider(step_id, run_input, upstream):
         raise ValueError("Provider received incorrect dependencies")
     outputs = {
         "business_model": {"model": "subscription", "revenue_streams": []},
-        "pricing_strategy": {"tiers": [{"name": "Starter", "price_monthly_usd": 10}]},
+        "pricing_strategy": {"tiers": [{"tier_name": "Starter", "price_monthly_usd": 10}]},
         "financial_projections": {"monthly_projections": [], "breakeven_month": 12},
         "risk_register": {"risks": []},
     }
