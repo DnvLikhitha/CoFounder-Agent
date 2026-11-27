@@ -2,6 +2,8 @@
 export/pdf_generator.py — Generate stylized PDF startup plan using ReportLab
 """
 from backend.context import RunContext
+from backend.agents.investor_metrics import investor_metrics
+from html import escape
 import io
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -66,7 +68,7 @@ def create_styles():
     return styles
 
 
-async def generate_pdf(ctx: RunContext) -> bytes:
+async def generate_pdf(ctx: RunContext, *, notice="") -> bytes:
     """Generate a complete PDF startup plan."""
     buffer = io.BytesIO()
     idea = ctx.startup_idea
@@ -79,6 +81,7 @@ async def generate_pdf(ctx: RunContext) -> bytes:
     fin = ctx.financial_projections
     risk = ctx.risk_register
     exec_sum = ctx.executive_summary
+    estimates = investor_metrics(market, fin)
 
     doc = SimpleDocTemplate(
         buffer,
@@ -94,8 +97,10 @@ async def generate_pdf(ctx: RunContext) -> bytes:
 
     # ── Cover Page ──────────────────────────────────────────────────────
     story.append(Spacer(1, 1.5*inch))
-    story.append(Paragraph(idea.get("startup_name", "Startup Plan"), styles["Title1"]))
-    story.append(Paragraph(idea.get("tagline", ""), styles["Subtitle"]))
+    story.append(Paragraph(escape(str(idea.get("startup_name", "Startup Plan"))), styles["Title1"]))
+    story.append(Paragraph(escape(str(idea.get("tagline", ""))), styles["Subtitle"]))
+    if notice:
+        story.append(Paragraph(escape(notice), styles["Subtitle"]))
     story.append(Spacer(1, 0.3*inch))
     story.append(HRFlowable(width="100%", thickness=1, color=ACCENT, spaceAfter=20))
     story.append(Paragraph("AI-Generated Investor-Ready Startup Plan", styles["Subtitle"]))
@@ -104,20 +109,13 @@ async def generate_pdf(ctx: RunContext) -> bytes:
     # Metrics snapshot
     metrics = exec_sum.get("key_metrics_snapshot", {})
     if metrics:
-        metric_data = [[
-            Paragraph(str(v), styles["MetricValue"]),
-        ] for k, v in list(metrics.items())[:6]]
-        flat_data = [
-            [Paragraph(list(metrics.keys())[i].replace("_", " ").upper(), styles["MetricLabel"])]
-            for i in range(min(6, len(metrics)))
-        ]
         combined = []
         for i in range(min(6, len(metrics))):
             k = list(metrics.keys())[i]
             v = list(metrics.values())[i]
             combined.append([
-                Paragraph(k.replace("_", " ").upper(), styles["MetricLabel"]),
-                Paragraph(str(v), styles["MetricValue"])
+                Paragraph(escape(k.replace("_", " ").upper()), styles["MetricLabel"]),
+                Paragraph(escape(str(v)), styles["MetricValue"])
             ])
         t = Table(combined, colWidths=[2.5*inch, 4*inch])
         t.setStyle(TableStyle([
@@ -136,7 +134,10 @@ async def generate_pdf(ctx: RunContext) -> bytes:
     # ── Executive Summary ───────────────────────────────────────────────
     story.append(Paragraph("Executive Summary", styles["SectionHeader"]))
     story.append(HRFlowable(width="100%", thickness=0.5, color=ACCENT, spaceAfter=10))
-    story.append(Paragraph(exec_sum.get("executive_summary", ""), styles["BodyText2"]))
+    story.append(Paragraph(escape(str(exec_sum.get("executive_summary", ""))), styles["BodyText2"]))
+    if ctx.problem_refined:
+        story.append(Paragraph("Refined Problem", styles["SectionHeader"]))
+        story.append(Paragraph(escape(ctx.problem_refined), styles["BodyText2"]))
     story.append(Spacer(1, 0.2*inch))
 
     # ── Startup Idea ────────────────────────────────────────────────────
@@ -150,7 +151,7 @@ async def generate_pdf(ctx: RunContext) -> bytes:
         ["Unfair Advantage", idea.get("unfair_advantage", "")],
     ]
     for row in idea_data:
-        story.append(Paragraph(f"<b>{row[0]}:</b> {row[1]}", styles["BodyText2"]))
+        story.append(Paragraph(f"<b>{row[0]}:</b> {escape(str(row[1]))}", styles["BodyText2"]))
     story.append(Spacer(1, 0.2*inch))
 
     # ── Market Research ─────────────────────────────────────────────────
@@ -158,10 +159,10 @@ async def generate_pdf(ctx: RunContext) -> bytes:
     story.append(HRFlowable(width="100%", thickness=0.5, color=ACCENT, spaceAfter=10))
     market_table = Table([
         ["Metric", "Value"],
-        ["Total Addressable Market (TAM)", f"${market.get('tam_usd_billions', '?')}B"],
-        ["Serviceable Addressable Market (SAM)", f"${market.get('sam_usd_billions', '?')}B"],
-        ["Serviceable Obtainable Market (SOM)", f"${market.get('som_usd_millions', '?')}M"],
-        ["Expected CAGR", f"{market.get('cagr_percent', '?')}%"],
+        ["Estimated TAM", estimates["tam"]],
+        ["Estimated SAM", estimates["sam"]],
+        ["Estimated SOM", estimates["som"]],
+        ["Estimated CAGR", estimates["cagr"]],
         ["Market Timing", market.get("market_timing", "")[:100]],
     ], colWidths=[2.5*inch, 4.5*inch])
     market_table.setStyle(TableStyle([
@@ -184,13 +185,10 @@ async def generate_pdf(ctx: RunContext) -> bytes:
     story.append(Paragraph("📈 Financial Highlights", styles["SectionHeader"]))
     story.append(HRFlowable(width="100%", thickness=0.5, color=ACCENT, spaceAfter=10))
     fin_table = Table([
-        ["Break-even Month", "12-mo ARR", "LTV", "CAC", "LTV:CAC"],
+        ["Break-even", "12-mo ARR", "LTV", "CAC", "LTV:CAC"],
         [
-            str(fin.get("breakeven_month", "?")),
-            f"${fin.get('arr_month_12_usd', 0):,.0f}",
-            f"${fin.get('ltv_usd', 0):,.0f}",
-            f"${fin.get('cac_usd', 0):,.0f}",
-            f"{fin.get('ltv_cac_ratio', 0):.1f}x",
+            Paragraph(escape(estimates["breakeven"]), styles["BodyText2"]),
+            estimates["arr"], estimates["ltv"], estimates["cac"], estimates["ltv_cac"],
         ]
     ], colWidths=[1.3*inch, 1.4*inch, 1.3*inch, 1.3*inch, 1.4*inch])
     fin_table.setStyle(TableStyle([
@@ -207,6 +205,10 @@ async def generate_pdf(ctx: RunContext) -> bytes:
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
     ]))
     story.append(fin_table)
+    if fin:
+        story.append(Paragraph("Financial figures are projections.", styles["BodyText2"]))
+    if note := fin.get("key_assumptions_note"):
+        story.append(Paragraph(escape(str(note)), styles["BodyText2"]))
     story.append(Spacer(1, 0.2*inch))
 
     # ── Pricing ──────────────────────────────────────────────────────────
@@ -308,7 +310,7 @@ async def generate_pdf(ctx: RunContext) -> bytes:
         if market_gaps:
             story.append(Paragraph("Our Opportunities:", styles["BodyText2"]))
             for gap in market_gaps:
-                story.append(Paragraph(f"• {gap}", styles["BulletItem"]))
+                story.append(Paragraph(f"• {escape(str(gap))}", styles["BulletItem"]))
         story.append(Spacer(1, 0.2*inch))
 
     # ── Footer note ──────────────────────────────────────────────────────

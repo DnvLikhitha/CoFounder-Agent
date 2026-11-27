@@ -2,7 +2,6 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from html import escape
 import json
 import time
 from typing import Annotated, Literal
@@ -19,7 +18,9 @@ from starlette.concurrency import run_in_threadpool
 from backend.config import settings
 from backend.context import RunContext
 from backend.contracts.v1 import Artifact, ArtifactList, EventId, HistoryPage, Identifier, RunInput, RunSnapshot
+from backend.run_worker.live_agents import apply_artifact
 from backend.run_worker.store import Store, StoreError, TERMINAL
+from backend.run_worker.workflow import FAKE_VERSIONS, LIVE_VERSION
 
 app = FastAPI(title="CoFounder-Agent v1 worker slice", version="1.0")
 bearer = HTTPBearer(auto_error=False)
@@ -77,8 +78,14 @@ async def database_error(request, exc):
 @app.post("/runs", response_model=RunSnapshot, status_code=202)
 def submit(body: RunInput, user: OwnerDependency, database: StoreDependency,
            idempotency_key: Annotated[str | None, Header(min_length=1, max_length=200)] = None):
+    try:
+        mode = settings.require_v1_provider_mode()
+    except ValueError as exc:
+        raise StoreError(503, "service_unavailable", str(exc)) from None
+    version = LIVE_VERSION if mode == "live" else FAKE_VERSIONS[-1]
     # An omitted key retains the merged contract's create-on-every-request behavior.
-    return database.submit(user.subject, idempotency_key or str(uuid4()), body.model_dump(mode="json"))
+    return database.submit(user.subject, idempotency_key or str(uuid4()), body.model_dump(mode="json"),
+                           version=version)
 
 
 @app.get("/runs", response_model=HistoryPage)
@@ -154,43 +161,42 @@ async def export(run_id: UUID, format: Literal["pdf", "markdown", "pptx"],
     context.status = {step["step_id"]: step["status"] for step in state["steps"]}
     for reference in state["artifacts"]:
         body = await run_in_threadpool(database.artifact, user.subject, run_id, reference["artifact_id"])
-        setattr(context, reference["kind"], body["content"])
+        apply_artifact(context, reference["kind"], body["content"])
     labels = {step["step_id"]: step["label"] for step in state["manifest"]["steps"]}
     missing = [labels[step["step_id"]] for step in state["steps"] if step["status"] in {"skipped", "failed"}]
     degraded = [labels[step["step_id"]] for step in state["steps"] if step["status"] == "partial"]
     status = "Partial results" if state["status"] == "partial" else "Succeeded"
-    notice = f"Fake-provider demonstration. {status}."
+    is_demo = state["manifest"]["version"] in FAKE_VERSIONS
+    notice = f"Fake-provider demonstration. {status}." if is_demo else f"{status}."
     if missing:
         notice += " Missing sections: " + ", ".join(missing) + "."
     if degraded:
         notice += " Incomplete sections: " + ", ".join(degraded) + "."
 
-    highlights = []
-    if model := context.business_model.get("model"):
-        highlights.append(f"Business model: {model}.")
-    for tier in context.pricing_strategy.get("tiers", []):
-        # Older fake runs used `name`; the report generators expect `tier_name`.
-        tier_name = tier.setdefault("tier_name", tier.get("name", "Tier"))
-        highlights.append(f'{tier_name} pricing: ${tier["price_monthly_usd"]}/month.')
-    if month := context.financial_projections.get("breakeven_month"):
-        highlights.append(f"Break-even month: {month}.")
-    if context.risk_register:
-        highlights.append(f'Risks recorded: {len(context.risk_register["risks"])}.')
-    summary = " ".join([notice, *highlights])
-    context.startup_idea = {"startup_name": "Fake workflow result", "tagline": status, "one_liner": notice}
-    context.executive_summary = {"executive_summary": summary}
+    if is_demo:
+        highlights = []
+        if model := context.business_model.get("model"):
+            highlights.append(f"Business model: {model}.")
+        for tier in context.pricing_strategy.get("tiers", []):
+            # Older fake runs used `name`; the report generators expect `tier_name`.
+            tier_name = tier.setdefault("tier_name", tier.get("name", "Tier"))
+            highlights.append(f'{tier_name} pricing: ${tier["price_monthly_usd"]}/month.')
+        if month := context.financial_projections.get("breakeven_month"):
+            highlights.append(f"Break-even month: {month}.")
+        if context.risk_register:
+            highlights.append(f'Risks recorded: {len(context.risk_register["risks"])}.')
+        context.startup_idea = {"startup_name": "Fake workflow result", "tagline": status}
+        context.executive_summary = {"executive_summary": " ".join(highlights)}
+        context.pitch_deck = {"slides": [{"title": "Workflow results", "bullet_points": highlights}]}
     if format == "markdown":
         from backend.export.markdown_writer import generate_markdown
-        content, media = (await generate_markdown(context)).encode(), "text/markdown"
+        content, media = (await generate_markdown(context, notice=notice)).encode(), "text/markdown"
     elif format == "pdf":
         from backend.export.pdf_generator import generate_pdf
-        context.startup_idea["one_liner"] = escape(notice)
-        context.executive_summary["executive_summary"] = escape(summary)
-        content, media = await generate_pdf(context), "application/pdf"
+        content, media = await generate_pdf(context, notice=notice), "application/pdf"
     else:
         from backend.export.pptx_generator import generate_pptx
-        context.pitch_deck = {"slides": [{"title": "Workflow results", "bullet_points": [notice, *highlights]}]}
-        content = await run_in_threadpool(generate_pptx, context)
+        content = await run_in_threadpool(generate_pptx, context, notice=notice)
         media = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     extension = "md" if format == "markdown" else format
     return Response(content, media_type=media, headers={

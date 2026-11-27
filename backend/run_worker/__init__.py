@@ -1,1 +1,1 @@
-"""PostgreSQL-backed v1 fake workflow slice."""
+"""PostgreSQL-backed execution for v1 workflows."""

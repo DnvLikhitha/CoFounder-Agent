@@ -31,7 +31,7 @@ async def search_web(query: str, num_results: int = 5, caller: str = "") -> str:
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:
-        logger.warning(f"🔍 SerpAPI: FAILED — {e}")
+        logger.warning(f"SerpAPI failed: {type(e).__name__}")
         return ""
 
     # Extract organic results and knowledge graph

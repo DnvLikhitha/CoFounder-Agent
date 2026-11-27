@@ -2,7 +2,6 @@
 llm/client.py — Groq API wrapper with fallback chain support
 """
 import asyncio
-from typing import Optional
 from loguru import logger
 from groq import AsyncGroq
 from backend.config import settings
@@ -62,7 +61,7 @@ class LLMClient:
 
             except Exception as e:
                 error_str = str(e)
-                logger.warning(f"⚠️ LLM error for {agent_name} (attempt {attempt+1}): {error_str}")
+                logger.warning(f"LLM error for {agent_name} (attempt {attempt+1}): {type(e).__name__}")
 
                 if "rate_limit" in error_str.lower() or "429" in error_str:
                     # Try a smaller/different model

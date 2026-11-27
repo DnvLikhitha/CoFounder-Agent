@@ -29,12 +29,15 @@ from backend.config import settings
 from backend.contracts.tool import replay
 from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot
 from backend.run_worker.api import app, store
+from backend.run_worker.provider_call import call_with_deadline
 from backend.run_worker import workflow
 from backend.run_worker.store import LostClaim, Store, StoreError
 from backend.run_worker.worker import execute_claim
 from backend.run_worker.workflow import (
-    InvalidOutput, PartialOutput, ProviderFailure, fake_provider, validate_output,
+    FAKE_VERSIONS, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure,
+    fake_provider, validate_output,
 )
+from backend.tests.test_live_agents import FIXTURE, fixture_provider
 
 
 # Synchronization tests share threading Events and closures with the test process.
@@ -83,7 +86,13 @@ class WorkerIntegrationTests(unittest.TestCase):
         cls.database.migrate()
         cls.secret = secrets.token_hex(32)
         cls.original_secret = settings.v1_jwt_secret
+        cls.original_provider_mode = settings.v1_provider_mode
+        cls.original_environment = settings.environment
+        cls.original_concurrency = settings.v1_step_concurrency
         settings.v1_jwt_secret = cls.secret
+        settings.v1_provider_mode = "fake"
+        settings.environment = "development"
+        settings.v1_step_concurrency = 2
         app.dependency_overrides[store] = lambda: Store(cls.dsn)
         cls.client = TestClient(app)
 
@@ -92,6 +101,9 @@ class WorkerIntegrationTests(unittest.TestCase):
         cls.client.close()
         app.dependency_overrides.clear()
         settings.v1_jwt_secret = cls.original_secret
+        settings.v1_provider_mode = cls.original_provider_mode
+        settings.environment = cls.original_environment
+        settings.v1_step_concurrency = cls.original_concurrency
         with psycopg.connect(cls.base_dsn) as connection:
             connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(cls.schema)))
 
@@ -303,7 +315,8 @@ class WorkerIntegrationTests(unittest.TestCase):
         initial = response.json()
         RunSnapshot.model_validate(initial)
         run_id = initial["run_id"]
-        environment = {**os.environ, "DATABASE_URL": self.dsn}
+        environment = {**os.environ, "DATABASE_URL": self.dsn, "V1_PROVIDER_MODE": "fake",
+                       "V1_STEP_CONCURRENCY": "2", "ENVIRONMENT": "development"}
         worker = subprocess.run([sys.executable, "-m", "backend.run_worker.worker", "--once"],
                                 env=environment, capture_output=True, timeout=30)
         self.assertEqual(worker.returncode, 0, "Separate worker failed")
@@ -678,6 +691,146 @@ class WorkerIntegrationTests(unittest.TestCase):
         response = client.get(f"/api/v1/runs/{run_id}", headers=self.headers())
         self.assertEqual(response.status_code, 200)
         client.close()
+
+    def test_live_submission_fails_without_provider_credentials(self):
+        with patch.object(settings, "v1_provider_mode", "live"), patch.object(settings, "groq_api_key", ""):
+            response = self.client.post("/runs", json=self.body, headers=self.headers())
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("GROQ_API_KEY", response.json()["error"]["message"])
+        self.assertIsNone(self.database.claim())
+
+    def test_all_live_agents_publish_committed_artifacts_and_export_real_content(self):
+        from io import BytesIO
+        from pptx import Presentation
+        from reportlab import rl_config
+
+        with patch.object(settings, "v1_provider_mode", "live"), patch.object(settings, "groq_api_key", "synthetic"):
+            response = self.client.post("/runs", json=self.body, headers=self.headers())
+        self.assertEqual(response.status_code, 202)
+        initial = response.json()
+        run_id = initial["run_id"]
+        self.assertEqual(initial["manifest"]["version"], LIVE_VERSION)
+        self.assertEqual([step["step_id"] for step in initial["manifest"]["steps"]], list(LIVE_STEPS))
+        self.assertIsNone(self.database.claim(versions=FAKE_VERSIONS))
+        independent_research = Barrier(2)
+        seen = {}
+
+        def observe_call(provider, step_id, body, upstream, timeout, calls):
+            spec = LIVE_STEPS[step_id]
+            self.assertTrue(set(spec.required + spec.optional) <= upstream.keys(), step_id)
+            for dependency, content in upstream.items():
+                self.assertEqual(self.database.artifact("alice", run_id, dependency)["content"], content)
+            seen[step_id] = frozenset(upstream)
+            if step_id in {"market_research", "competitor_analysis"}:
+                independent_research.wait(5)
+            return call_with_deadline(provider, step_id, body, upstream, timeout, calls)
+
+        with patch("backend.run_worker.worker.live_provider", fixture_provider), \
+             patch("backend.run_worker.worker.call_with_deadline", observe_call), \
+             patch.object(settings, "v1_step_concurrency", 2):
+            execute_claim(self.database, self.database.claim(versions=(LIVE_VERSION,)))
+        final = self.client.get(f"/runs/{run_id}", headers=self.headers()).json()
+        self.assertEqual(final["status"], "succeeded")
+        self.assertEqual(set(seen), set(LIVE_STEPS))
+        self.assertEqual(len(final["artifacts"]), 16)
+        self.assertEqual({artifact["kind"] for artifact in final["artifacts"]}, set(LIVE_STEPS))
+        market_path = f"/runs/{run_id}/artifacts/market_research"
+        market = self.client.get(market_path, headers=self.headers()).json()["content"]
+        self.assertEqual(market["tool_evidence"]["serpapi_sources"], ["https://example.org/audit-source"])
+        self.assertIn("synthetic fixture", market["tool_evidence"]["fred_data"])
+        self.assertIsNone(market["cagr_percent"])
+        self.assertEqual(self.client.get(market_path, headers=self.headers("bob")).status_code, 404)
+
+        wire = self.client.get(f"/runs/{run_id}/events", headers=self.headers())
+        self.assertEqual(wire.status_code, 200)
+        events = [json.loads(line[6:]) for line in wire.text.splitlines() if line.startswith("data: ")]
+        self.assertEqual(replay(initial, events), final)
+        remainder = self.client.get(f"/runs/{run_id}/events?after=30", headers=self.headers())
+        self.assertEqual([json.loads(line[6:]) for line in remainder.text.splitlines()
+                          if line.startswith("data: ")], events[30:])
+
+        exports = f"/runs/{run_id}/exports"
+        markdown = self.client.get(f"{exports}/markdown", headers=self.headers())
+        self.assertIn("Campus Bridge & Co", markdown.text)
+        self.assertIn("CREATE TABLE verified_roles", markdown.text)
+        self.assertIn("A Verified Internship Gap", markdown.text)
+        self.assertIn("https://example.org/audit-source", markdown.text)
+        self.assertNotIn("Fake-provider demonstration", markdown.text)
+        with patch.object(rl_config, "pageCompression", 0):
+            pdf = self.client.get(f"{exports}/pdf", headers=self.headers())
+        self.assertEqual(pdf.status_code, 200)
+        self.assertIn(b"Campus Bridge connects busy students", pdf.content)
+        self.assertIn(b"Campus Pilot", pdf.content)
+        pptx = self.client.get(f"{exports}/pptx", headers=self.headers())
+        self.assertEqual(pptx.status_code, 200)
+        deck = Presentation(BytesIO(pptx.content))
+        self.assertEqual(len(deck.slides), 13)  # Report cover plus the 12 generated slides.
+        self.assertEqual(deck.slides[1].shapes[0].text, "A Verified Internship Gap")
+        self.assertIn("Describe the schedule verification workflow", deck.slides[1].notes_slide.notes_text_frame.text)
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_live_reclaim_preserves_artifacts_and_isolates_failed_pricing_dependencies(self):
+        initial = self.database.submit("alice", "live-reclaim", self.body, version=LIVE_VERSION)
+        run_id = initial["run_id"]
+        original = self.database.claim()
+        for step_id in ("problem_refined", "startup_idea"):
+            inputs = self.database.begin_step(*original, step_id)
+            self.database.complete_step(*original, step_id, fixture_provider(step_id, *inputs))
+        before = self.database.snapshot("alice", run_id)
+        self.expire(run_id)
+        replacement = self.database.claim()
+        self.assertEqual(replacement[0], run_id)
+        with self.assertRaises(LostClaim):
+            self.database.begin_step(*original, "market_research")
+
+        fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        def provider(step_id, body, upstream):
+            self.assertNotIn(step_id, {"problem_refined", "startup_idea", "financial_projections",
+                                       "pitch_deck", "executive_summary"})
+            if step_id == "pricing_strategy":
+                return {"tiers": []}
+            return fixture[step_id]["personas"] if step_id == "customer_personas" else fixture[step_id]
+
+        execute_claim(Store(self.dsn), replacement, provider)
+        final = self.database.snapshot("alice", run_id)
+        states = {step["step_id"]: step for step in final["steps"]}
+        self.assertEqual(final["status"], "partial")
+        self.assertEqual(final["artifacts"][:2], before["artifacts"])
+        self.assertEqual(states["startup_idea"]["attempt"], 1)
+        self.assertEqual(states["pricing_strategy"]["error"]["code"], "invalid_output")
+        for step_id in ("financial_projections", "pitch_deck", "executive_summary"):
+            self.assertEqual(states[step_id]["error"]["code"], "dependency_blocked")
+        self.assertEqual(states["risk_register"]["status"], "succeeded")
+        self.assertEqual(states["database_schema"]["status"], "succeeded")
+        self.assertEqual(replay(initial, self.database.events("alice", run_id, 0)), final)
+        report = self.client.get(f"/runs/{run_id}/exports/markdown", headers=self.headers())
+        self.assertIn("Partial results", report.text)
+        self.assertIn("Missing sections: Pricing Strategy, Financial Projections, Pitch Deck, Executive Summary", report.text)
+        self.assertIn("Campus Bridge & Co", report.text)
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_live_failed_optional_risk_does_not_block_executive_summary(self):
+        initial = self.database.submit("alice", "optional-risk", self.body, version=LIVE_VERSION)
+        fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+        def provider(step_id, body, upstream):
+            if step_id == "risk_register":
+                raise ProviderFailure()
+            if step_id == "executive_summary":
+                self.assertNotIn("risk_register", upstream)
+                self.assertIn("financial_projections", upstream)
+            if step_id == "customer_personas":
+                return fixture[step_id]["personas"]
+            if step_id == "pitch_deck":
+                return {"slides": fixture[step_id]}
+            return fixture[step_id]
+
+        execute_claim(self.database, self.database.claim(), provider)
+        final = self.database.snapshot("alice", initial["run_id"])
+        self.assertEqual(final["status"], "partial")
+        states = {step["step_id"]: step["status"] for step in final["steps"]}
+        self.assertEqual(states["risk_register"], "failed")
+        self.assertEqual(states["executive_summary"], "succeeded")
 
 
 if __name__ == "__main__":

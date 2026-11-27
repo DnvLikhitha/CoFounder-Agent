@@ -4,6 +4,7 @@ Builds 12-month P&L projection with unit economics.
 Uses FRED for interest rates, inflation, and macro context.
 """
 from backend.agents.base import BaseAgent
+from backend.agents.investor_metrics import format_metric
 from backend.context import RunContext
 from backend.tools.fred_client import fetch_fred_data
 
@@ -12,7 +13,7 @@ PROMPT_TEMPLATE = """You are a CFO with 15 years of experience building financia
 
 Startup: {startup_name}
 Pricing Tiers: {pricing_tiers}
-SAM: ${sam}B
+Estimated SAM: {sam}
 GTM Strategy: {gtm_channels}
 {external_research_block}
 
@@ -70,7 +71,9 @@ Output EXACTLY this JSON:
 }}
 ```
 
-Include all 12 months in monthly_projections array. Be mathematically consistent.
+Include all 12 months in the monthly_projections array. Be mathematically consistent.
+Use 0 for breakeven_month if the project does not break even within the forecast period.
+Use null for unavailable summary metrics.
 """
 
 
@@ -101,8 +104,8 @@ class Agent9_Financials(BaseAgent):
         block = f"\nCurrent Economic Data (use for cost of capital, inflation assumptions):\n{external_research}\n" if external_research else ""
         return PROMPT_TEMPLATE.format(
             startup_name=idea.get("startup_name", "Our Startup"),
-            pricing_tiers=", ".join(tiers) if tiers else "Freemium: $0, Pro: $49/mo, Team: $149/mo",
-            sam=market.get("sam_usd_billions", 1),
+            pricing_tiers=", ".join(tiers) if tiers else "Unavailable",
+            sam=format_metric(market.get("sam_usd_billions"), "${:g}B"),
             gtm_channels=str(channels),
             external_research_block=block,
         )
@@ -120,5 +123,5 @@ class Agent9_Financials(BaseAgent):
         return ctx
 
     def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.financial_projections = {"monthly_projections": [], "breakeven_month": 12}
+        ctx.financial_projections = {"monthly_projections": [], "breakeven_month": None}
         return ctx
