@@ -1,0 +1,105 @@
+{
+  "problem_refined": {
+    "problem_refined": "Campus career teams cannot reliably route local internships to students who can commute.",
+    "target_user": "Campus career coordinators",
+    "existing_solutions": ["Email lists", "Spreadsheet directories"],
+    "why_existing_solutions_fail": "Availability and commute details become outdated.",
+    "opportunity_statement": "Create a searchable local internship directory."
+  },
+  "startup_idea": {
+    "startup_name": "Campus Route",
+    "tagline": "Find internships within reach.",
+    "one_liner": "A local internship directory maintained with career offices.",
+    "value_proposition": "Find verified openings by commute and schedule.",
+    "target_customer": "University career offices",
+    "key_differentiator": "Listings show realistic commuter constraints."
+  },
+  "market_research": {
+    "tam_usd_billions": 0.21,
+    "sam_usd_billions": 0.045,
+    "som_usd_millions": 2.4,
+    "market_trends": ["Career offices are testing more local partnerships."],
+    "target_segments": [{ "segment": "Commuter campuses", "size_percent": 30, "pain_level": "high" }],
+    "market_timing": "Start with one academic term.",
+    "sources": [{ "title": "Example internship survey (fixture)", "url": "https://example.org/internship-survey" }],
+    "assumptions": ["University students will start with internships near their campus."]
+  },
+  "competitor_analysis": {
+    "competitors": [
+      { "name": "Campus Boards", "market_position": "Campus job listings", "starting_price_monthly": 0, "strengths": ["Wide adoption"], "weaknesses": ["Limited commute filters"] },
+      { "name": "Regional Placement Desk", "market_position": "Managed placement", "strengths": ["Employer relationships"], "weaknesses": ["Manual intake"] }
+    ],
+    "market_gaps": ["Commute-aware matching"],
+    "competitive_moat_recommendation": "Build verified employer relationships."
+  },
+  "customer_personas": {
+    "personas": [{ "name": "Commuter student", "job_title": "Undergraduate", "pain_points": ["Long commutes"], "goals": ["Find term-time work"], "willingness_to_pay_monthly_usd": 0, "quote": "I need a placement I can reach between classes." }]
+  },
+  "product_design": {
+    "must_have_features": [{ "feature": "Commute filters", "description": "Filter by travel time and campus." }],
+    "should_have_features": [{ "feature": "Saved searches", "description": "Revisit a set of filters." }],
+    "core_ux_flows": [{ "flow_name": "Find a placement", "steps": ["Select campus", "Set commute limit", "Open listing"], "estimated_completion_time": "2 minutes" }],
+    "accessibility_notes": ["All search controls must be keyboard accessible."]
+  },
+  "mvp_roadmap": {
+    "total_weeks": 6,
+    "first_user_milestone": "First student saves a verified listing.",
+    "sprints": [{ "sprint_number": 1, "theme": "Search pilot", "sprint_goal": "Make verified listings searchable.", "duration_weeks": 2, "deliverable": "Campus search prototype", "user_stories": [{ "title": "Filter by campus", "story_points": 3 }] }],
+    "mvp_success_criteria": ["A career office can publish its first verified listing."]
+  },
+  "business_model": {
+    "revenue_streams": [{ "stream": "Campus subscriptions", "model": "subscription", "description": "Career offices pay per campus." }],
+    "gtm_phases": [{ "phase": "Pilot", "strategy": "Recruit career offices directly.", "target": "Regional universities" }],
+    "cost_structure": { "fixed_costs": ["Hosting", "Support"] }
+  },
+  "pricing_strategy": {
+    "pricing_philosophy": "Free for students, paid for campus teams.",
+    "tiers": [
+      { "tier_name": "Student", "price_monthly_usd": 0, "features_included": ["Search and save"] },
+      { "tier_name": "Campus", "price_monthly_usd": 150, "price_annual_usd": 1500, "target_persona": "Career office", "features_included": ["Listing administration"] }
+    ]
+  },
+  "financial_projections": {
+    "monthly_projections": [
+      { "month": 1, "total_customers": 0, "mrr_usd": 0, "net_profit_usd": -2200 },
+      { "month": 2, "total_customers": 5, "mrr_usd": 750 },
+      { "month": 3, "total_customers": 14, "mrr_usd": 2100, "net_profit_usd": 250 }
+    ],
+    "breakeven_month": 3,
+    "assumptions": { "avg_revenue_per_user_usd": 150 },
+    "key_assumptions_note": "Illustrative projection for the fixture workload."
+  },
+  "risk_register": {
+    "risk_summary": "The first pilot depends on retaining employer listings.",
+    "risks": [{ "risk_id": "R1", "title": "Stale listings", "category": "Operations", "probability": "High", "impact": "Medium", "mitigation_strategy": "Expire and reconfirm listings regularly." }]
+  },
+  "tech_architecture": {
+    "architecture_pattern": "API and worker",
+    "architecture_description": "A browser UI submits work to an API with a durable worker queue.",
+    "frontend_stack": { "framework": "React" },
+    "backend_stack": { "framework": "FastAPI", "language": "Python" },
+    "database": { "primary": "PostgreSQL" }
+  },
+  "database_schema": {
+    "entities": [{ "entity": "listings", "purpose": "Store searchable internships." }],
+    "sql_schema": "CREATE TABLE listings (id bigint PRIMARY KEY, title text NOT NULL);",
+    "relationships": [],
+    "indexes_created": ["listings_pkey"]
+  },
+  "security_compliance": {
+    "owasp_top10_checklist": [{ "item": "Broken access control", "status": "Required", "action": "Check tenant ownership on private listings." }],
+    "auth_recommendation": { "strategy": "Managed sign-in", "mfa_required": true },
+    "data_privacy_actions": ["Limit access to student contact details."]
+  },
+  "pitch_deck": {
+    "slides": [
+      { "slide_number": 1, "title": "Campus Route", "headline": "Internships within reach", "bullet_points": ["Verified local openings", "Commute-aware search"], "speaker_notes": "Introduce the campus pilot." },
+      { "slide_number": 2, "title": "Pilot plan", "headline": "Start with one campus", "bullet_points": ["Partner with a career office", "Measure verified listings and student searches"] }
+    ]
+  },
+  "executive_summary": {
+    "executive_summary": "Campus Route helps students find verified internships they can realistically commute to.",
+    "mission_statement": "Make local internship opportunities easier to discover.",
+    "elevator_pitch": "Give campus career offices a commuter-friendly placement directory."
+  }
+}

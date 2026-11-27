@@ -44,13 +44,13 @@ export function createMockClient({
 
     let events = fixture.events
     if (decision?.decision === 'reject') {
-      const review = fixture.events.find(({ type }) => type === 'review.requested').data
-      const error = { code: 'review_rejected', message: 'The research review was rejected.', retryable: false }
-      const queued = snapshot.steps.filter((step) => step.step_id !== review.step_id)
+      const error = { code: 'review_rejected', message: 'The founder rejected the checkpoint.', retryable: false }
+      const paused = events.slice(0, reviewIndex).map(toFrame).reduce(applyFrame, fixture.snapshot)
+      const queued = paused.steps.filter((step) => step.status === 'queued')
       events = [
         ...events.slice(0, reviewIndex + 1),
         ...queued.map((step) => ({ type: 'step.updated', data: { ...step, status: 'skipped' } })),
-        { type: 'run.updated', data: { status: 'partial', error, completed_at: created } },
+        { type: 'run.updated', data: { status: paused.artifacts.length ? 'partial' : 'failed', error, completed_at: created } },
       ]
     }
 
@@ -105,13 +105,23 @@ export function createMockClient({
       const { revisionRequest } = findRun(runId)
       return revisionRequest?.review_id === reviewId ? revisionRequest : null
     },
-    async startRun(input, { scenario = 'succeeded', signal } = {}) {
+    async startRun(input, { scenario = 'succeeded', signal, idempotencyKey } = {}) {
       signal?.throwIfAborted()
       if (!Object.hasOwn(fixtures, scenario)) throw new ApiError('Unknown mock scenario.', { status: 422 })
+      if (idempotencyKey) {
+        const existing = Object.entries(readRuns()).find(([, record]) => record.idempotencyKey === idempotencyKey)
+        if (existing) {
+          const [id, record] = existing
+          if (record.scenario !== scenario || ['problem', 'domain', 'geography'].some((key) => record.input[key] !== input[key])) {
+            throw new ApiError('This submission key belongs to a different request.', { status: 409 })
+          }
+          return materialize(id, record).snapshot
+        }
+      }
       const runId = makeId()
-      const record = { scenario, input, startedAt: now() }
+      const record = { scenario, input, startedAt: now(), idempotencyKey }
       saveRun(runId, record)
-      return getSnapshot(runId, record)
+      return materialize(runId, record).snapshot
     },
     async getRun(runId, { signal } = {}) {
       signal?.throwIfAborted()

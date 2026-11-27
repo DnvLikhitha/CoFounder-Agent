@@ -1,5 +1,6 @@
 import { createParser } from 'eventsource-parser'
 import { ApiError } from './client.js'
+import { readExport } from './exports.js'
 import { ProtocolError } from './run-state.js'
 
 const runsPath = '/api/v1/runs'
@@ -30,18 +31,18 @@ export function createLiveClient(fetcher = globalThis.fetch, { accessToken, onUn
     }
   }
 
-  function post(path, body, signal) {
+  function post(path, body, signal, headers) {
     return json(path, {
       method: 'POST', signal,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
     })
   }
 
   return {
     supportsExports: true,
-    startRun(input, { signal } = {}) {
-      return post(runsPath, input, signal)
+    startRun(input, { signal, idempotencyKey } = {}) {
+      return post(runsPath, input, signal, idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined)
     },
     getRun(runId, { signal } = {}) {
       return json(runPath(runId), { signal, cache: 'no-store' })
@@ -62,19 +63,7 @@ export function createLiveClient(fetcher = globalThis.fetch, { accessToken, onUn
     },
     async downloadExport(runId, format, { signal } = {}) {
       const response = await request(`${runPath(runId)}/exports/${encodeURIComponent(format)}`, { signal })
-      const disposition = response.headers.get('Content-Disposition') ?? ''
-      const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
-      const plain = disposition.match(/filename=(?:"([^"]+)"|([^;]+))/i)
-      const extension = format === 'markdown' ? 'md' : format
-      let filename = plain?.[1] || plain?.[2]?.trim() || `startup-plan.${extension}`
-      if (encoded) {
-        try {
-          filename = decodeURIComponent(encoded)
-        } catch {
-          // Keep the plain or default filename if the encoded form is invalid.
-        }
-      }
-      return { blob: await response.blob(), filename: filename.replace(/[/\\]/g, '_') }
+      return readExport(response, format)
     },
     async streamEvents(runId, { after, signal, onOpen, onFrame }) {
       const response = await request(`${runPath(runId)}/events?after=${after}`, {

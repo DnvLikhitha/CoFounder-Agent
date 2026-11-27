@@ -2,6 +2,7 @@
 export function readEvidence(content) {
   const sources = [
     ...items(content?.sources),
+    ...items(content?.data_sources_referenced),
     ...items(content?.tool_evidence?.serpapi_sources),
   ].map(sourceReference).filter(Boolean)
   const unique = new Map()

@@ -1,28 +1,74 @@
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { ArtifactContent } from './ArtifactContent.jsx'
 import { readEvidence } from './lib/artifact-details.js'
 import { useArtifact } from './lib/use-artifact.js'
 
-export function OutputSection({ artifacts, evaluations, client, runId, status, activeId, onSelect }) {
-  const active = artifacts.find((item) => item.artifact_id === activeId) ?? artifacts[0]
+export function OutputSection({ artifacts, evaluations, client, runId, status, steps, activeId, onSelect }) {
+  const order = new Map(steps.map((step, position) => [step.step_id, position]))
+  const available = [...artifacts].sort((a, b) =>
+    (order.get(a.step_id) ?? steps.length) - (order.get(b.step_id) ?? steps.length)).map((artifact) => ({
+    id: artifact.artifact_id, label: artifact.title, artifact,
+  }))
+  const unavailable = steps.flatMap((step) => step.artifact_kinds
+    .filter((kind) => !artifacts.some((artifact) => artifact.step_id === step.step_id && artifact.kind === kind))
+    .map((kind) => ({
+      id: `missing:${step.step_id}:${kind}`,
+      label: step.artifact_kinds.length > 1 ? `${step.label} · ${kind.replaceAll('_', ' ')}` : step.label,
+      step,
+    })))
+  const choices = [...available, ...unavailable]
+  const active = choices.find(({ id }) => id === activeId) ??
+    available.find(({ artifact }) => `missing:${artifact.step_id}:${artifact.kind}` === activeId) ?? choices[0]
   return (
     <section className="panel outputs" aria-labelledby="outputs-title">
-      <h2 id="outputs-title" tabIndex={-1}>Outputs</h2>
+      <header className="section-heading">
+        <h2 id="outputs-title" tabIndex={-1}>Run outputs</h2>
+        <span>{artifacts.length} available</span>
+      </header>
       {active ? (
         <>
-          <div className="artifact-tabs" role="group" aria-label="Available artifacts">
-            {artifacts.map((artifact) => (
-              <button type="button" key={artifact.artifact_id} aria-pressed={active === artifact}
-                onClick={() => onSelect(artifact.artifact_id)}>
-                {artifact.title}
-              </button>
-            ))}
+          <div className="output-navigation">
+            <label htmlFor="artifact-selector">Browse outputs</label>
+            <select className="input-surface" id="artifact-selector" value={active.id}
+              onChange={(event) => onSelect(event.target.value)}>
+              <ArtifactOptions title="Available" choices={available} />
+              <ArtifactOptions title="Pending or unavailable" choices={unavailable} />
+            </select>
           </div>
-          <Artifact key={active.artifact_id} reference={active} client={client} runId={runId}
-            evaluations={evaluations.filter((item) => item.artifact_id === active.artifact_id)} />
+          {active.artifact ? (
+            <Artifact key={active.id} reference={active.artifact} client={client} runId={runId}
+              evaluations={evaluations.filter((item) => item.artifact_id === active.id)} />
+          ) : <MissingArtifact entry={active} status={status} />}
         </>
       ) : <p className="muted">{emptyMessage[status]}</p>}
     </section>
+  )
+}
+
+function ArtifactOptions({ title, choices }) {
+  if (!choices.length) return null
+  return (
+    <optgroup label={title}>
+      {choices.map(({ id, label, artifact }) => (
+        <option key={id} value={id}>
+          {label}{artifact && choices.some((item) => item.id !== id && item.label === label) ? ` · ${id}` : ''}
+        </option>
+      ))}
+    </optgroup>
+  )
+}
+
+function MissingArtifact({ entry, status }) {
+  const { step, label } = entry
+  const unavailable = ['succeeded', 'partial', 'failed'].includes(status) ||
+    ['succeeded', 'partial', 'failed', 'skipped'].includes(step.status) || step.blocked
+  return (
+    <article>
+      <h3>{label}</h3>
+      <p className="muted">{unavailable
+        ? 'No artifact was published for this output.'
+        : 'This output will be available once the agent publishes it.'}</p>
+      {step.error && <p className="notice warning">{step.error.message}</p>}
+    </article>
   )
 }
 
@@ -106,51 +152,6 @@ export function Assumptions({ entries }) {
       ))}
     </ul>
   )
-}
-
-function ArtifactContent({ reference, content }) {
-  if (content === null || typeof content === 'string' && !content.trim()) {
-    return <p className="muted">This artifact has no content.</p>
-  }
-  const markdown = reference.media_type === 'text/markdown' ? content : legacyMarkdown(reference.kind, content)
-  if (typeof markdown === 'string') {
-    return <div className="markdown-content"><Markdown remarkPlugins={[remarkGfm]}>{markdown}</Markdown></div>
-  }
-  if (typeof content === 'string') return <p className="plain-content">{content}</p>
-  return <pre className="artifact-json">{JSON.stringify(content, null, 2)}</pre>
-}
-
-// Preserve the legacy formatted highlights when their expected fields are supplied.
-function legacyMarkdown(kind, data) {
-  if (!data || typeof data !== 'object') return null
-  if (kind === 'executive_summary') {
-    const summary = data.executive_summary ?? data.summary
-    if (typeof summary !== 'string') return null
-    return [
-      summary,
-      ...[['Mission', data.mission_statement], ['Elevator pitch', data.elevator_pitch],
-        ['Investor email subject', data.investor_email_subject]]
-        .filter(([, value]) => typeof value === 'string' && value)
-        .map(([label, value]) => `**${label}** — ${value}`),
-    ].join('\n\n')
-  }
-  if (kind === 'market_research') {
-    const metrics = [
-      ['TAM', data.tam_usd_billions, 'B'], ['SAM', data.sam_usd_billions, 'B'],
-      ['SOM', data.som_usd_millions, 'M'], ['CAGR', data.cagr_percent, '%'],
-    ].filter(([, value]) => typeof value === 'number')
-    const table = metrics.length > 0 ? ['| Metric | Value |', '| --- | --- |',
-      ...metrics.map(([name, value, unit]) => `| ${name} | ${unit === '%' ? '' : '$'}${value}${unit} |`)].join('\n') : ''
-    const findings = data.market_trends ?? data.findings
-    const list = Array.isArray(findings) && findings.every((item) => typeof item === 'string')
-      ? findings.map((item) => `- ${item}`).join('\n') : ''
-    const sections = [
-      typeof data.audience === 'string' && `**Audience** — ${data.audience}`, table, list,
-      typeof data.market_timing === 'string' && `**Why now** — ${data.market_timing}`,
-    ].filter(Boolean)
-    return sections.length > 0 ? sections.join('\n\n') : null
-  }
-  return null
 }
 
 export function Evaluations({ evaluations, artifacts, manifest }) {

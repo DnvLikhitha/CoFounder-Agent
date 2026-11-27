@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { createSubmissionKeys } from './lib/submission.js'
 
 const domains = ['General', 'SaaS', 'HealthTech', 'EdTech', 'FinTech', 'Marketplace', 'AI/ML', 'Consumer', 'B2B', 'Other']
 
 export function InputForm({ client, mockMode }) {
   const navigate = useNavigate()
   const pending = useRef(null)
+  const [keys] = useState(createSubmissionKeys)
   const [problem, setProblem] = useState('')
   const [state, setState] = useState({ loading: false, error: '' })
   useEffect(() => () => pending.current?.abort(), [])
@@ -23,15 +25,25 @@ export function InputForm({ client, mockMode }) {
     const request = new AbortController()
     pending.current = request
     setState({ loading: true, error: '' })
+    const input = {
+      problem: trimmed,
+      domain: form.get('domain') || null,
+      geography: form.get('geography').trim() || null,
+    }
+    const scenario = form.get('scenario') ?? undefined
     try {
-      const { run_id } = await client.startRun({
-        problem: trimmed,
-        domain: form.get('domain') || null,
-        geography: form.get('geography').trim() || null,
-      }, { signal: request.signal, scenario: form.get('scenario') ?? undefined })
-      if (!request.signal.aborted) navigate(`/run/${encodeURIComponent(run_id)}`)
+      const { run_id } = await client.startRun(input, {
+        signal: request.signal, scenario, idempotencyKey: keys.get(input, scenario),
+      })
+      if (!request.signal.aborted) {
+        keys.reset()
+        navigate(`/run/${encodeURIComponent(run_id)}`)
+      }
     } catch (error) {
-      if (!request.signal.aborted) setState({ loading: false, error: error.message })
+      if (!request.signal.aborted) {
+        const uncertain = error.status == null || error.status >= 500
+        setState({ loading: false, error: error.message, uncertain })
+      }
     } finally {
       pending.current = null
     }
@@ -43,10 +55,11 @@ export function InputForm({ client, mockMode }) {
         <label htmlFor="problem">What problem are you solving?</label>
         <textarea
           className="input-surface" id="problem" value={problem} rows={5} required maxLength={500}
-          aria-describedby="problem-length"
+          aria-describedby="problem-guide problem-length"
           placeholder="For example, students struggle to find internships that match their skills."
           onChange={(event) => setProblem(event.target.value)}
         />
+        <p id="problem-guide" className="field-help muted">Include who has the problem and how they handle it today.</p>
         <div className="field-hint" id="problem-length">
           <span>10–500 characters</span><span>{problem.length}/500</span>
         </div>
@@ -68,13 +81,23 @@ export function InputForm({ client, mockMode }) {
           <div className="scenario">
             <label htmlFor="scenario">Mock scenario</label>
             <select className="input-surface" name="scenario" id="scenario">
-              <option value="succeeded">Success after review</option>
-              <option value="partial">Partial results after review</option>
+              <option value="full-succeeded">Full workflow · successful run</option>
+              <option value="full-partial">Full workflow · pricing failure</option>
             </select>
+            <p className="field-help muted">Mock runs display sample outputs.</p>
           </div>
         )}
         {state.error && <p className="notice error" role="alert">{state.error}</p>}
-        <button className="primary start-button">{state.loading ? 'Starting…' : 'Generate startup plan'}</button>
+        {state.uncertain && <p className="muted">Retry the same input to recover the existing submission if it was accepted.</p>}
+        <div className="actions submission-actions">
+          <button className="primary start-button">{state.loading ? 'Starting…' : state.uncertain ? 'Retry submission' : 'Generate startup plan'}</button>
+          {state.uncertain && (
+            <button type="button" onClick={() => {
+              keys.reset()
+              setState({ loading: false, error: '' })
+            }}>Start a new submission</button>
+          )}
+        </div>
       </fieldset>
     </form>
   )
