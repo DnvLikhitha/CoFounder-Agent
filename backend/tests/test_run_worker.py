@@ -31,6 +31,18 @@ from backend.run_worker.workflow import (
 )
 
 
+# Synchronization tests share threading Events and closures with the test process.
+# Other tests exercise the worker's production process boundary.
+def inline_call(provider, step_id, body, upstream, timeout):
+    return provider(step_id, body, upstream)
+
+
+def hang_during_pricing(step_id, body, upstream):
+    if step_id == "pricing_strategy":
+        Event().wait()
+    return fake_provider(step_id, body, upstream)
+
+
 class PricingValidationTests(unittest.TestCase):
     def test_json_prices_accept_finite_numbers(self):
         for value, accepted in [(10, True), (10.25, True), (True, False), ("10", False),
@@ -99,6 +111,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(failure.exception.status, 409)
         self.assertNotEqual(self.submit("bob")["run_id"], snapshots[0]["run_id"])
 
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
     def test_claim_exclusion_reclaim_and_restart(self):
         initial = self.submit()
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -156,6 +169,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         ids = [event["event_id"] for event in self.database.events("alice", run_id, 0)]
         self.assertEqual(ids, list(range(1, checkpoint["last_event_id"] + 1)))
 
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
     def test_slow_provider_keeps_claim_past_its_original_expiry(self):
         run_id = self.submit()["run_id"]
         lease_seconds = 2
@@ -181,6 +195,22 @@ class WorkerIntegrationTests(unittest.TestCase):
         snapshot = self.database.snapshot("alice", run_id)
         self.assertEqual(snapshot["status"], "succeeded")
         self.assertTrue(all(step["attempt"] == 1 for step in snapshot["steps"]))
+
+    def test_hung_provider_fails_step_and_worker_can_process_next_run(self):
+        run_id = self.submit()["run_id"]
+        with patch.object(settings, "v1_provider_timeout_seconds", 6):
+            execute_claim(self.database, self.database.claim(2), hang_during_pricing, lease_seconds=2)
+        final = self.database.snapshot("alice", run_id)
+        steps = {step["step_id"]: step for step in final["steps"]}
+        self.assertEqual(final["status"], "partial")
+        self.assertEqual(steps["pricing_strategy"]["status"], "failed")
+        self.assertEqual(steps["pricing_strategy"]["error"]["code"], "provider_timeout")
+        self.assertEqual(steps["financial_projections"]["status"], "skipped")
+        self.assertEqual(steps["risk_register"]["status"], "succeeded")
+        self.assertNotIn("pricing_strategy", [a["artifact_id"] for a in final["artifacts"]])
+        next_run = self.submit(key="after-timeout")["run_id"]
+        execute_claim(self.database, self.database.claim())
+        self.assertEqual(self.database.snapshot("alice", next_run)["status"], "succeeded")
 
     def test_lease_expiring_during_commit_rolls_back(self):
         run_id = self.submit()["run_id"]
@@ -296,6 +326,7 @@ class WorkerIntegrationTests(unittest.TestCase):
             publication.result(timeout=5)
             self.assertEqual(finance.result(timeout=5)[1]["pricing_strategy"], pricing)
 
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
     def test_runner_schedules_dependencies_before_display_order(self):
         initial = self.submit()
         reordered = deepcopy(initial)
@@ -315,6 +346,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         execute_claim(self.database, self.database.claim(), provider)
         self.assertLess(observed.index("pricing_strategy"), observed.index("financial_projections"))
 
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
     def test_invalid_pricing_blocks_only_financials_while_risk_runs_concurrently(self):
         initial = self.submit()
         siblings = Barrier(2)
@@ -377,6 +409,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(final["status"], "succeeded")
         self.assertEqual(replay(initial, self.database.events("alice", initial["run_id"], 0)), final)
 
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
     def test_partial_pricing_survives_reclaim_and_blocks_required_consumer(self):
         initial = self.submit()
         claim = self.database.claim()
@@ -494,6 +527,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertNotIn(newest, [run["run_id"] for run in last["runs"]])
         self.assertNotIn("steps", last["runs"][0])
 
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
     def test_partial_and_failed_results_and_exports(self):
         from io import BytesIO
         from pptx import Presentation

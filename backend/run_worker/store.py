@@ -274,7 +274,7 @@ class Store:
                 error = next((s["error"] for s in incomplete if s["error"]), None)
             self._run_status(connection, snapshot, status, now(connection), error)
 
-    def fail(self, run_id, token, step_id, *, invalid_output=False):
+    def fail(self, run_id, token, step_id, *, invalid_output=False, timed_out=False):
         with self._claimed(run_id, token) as (connection, snapshot):
             timestamp = now(connection)
             step = next(s for s in snapshot["steps"] if s["step_id"] == step_id)
@@ -282,5 +282,7 @@ class Store:
                 raise StoreError(409, "state_conflict", "Step is not running")
             error = dict(code="invalid_output" if invalid_output else "provider_failed",
                          message="Invalid provider output" if invalid_output else "Provider failed", retryable=False)
+            if timed_out:
+                error = dict(code="provider_timeout", message="Provider exceeded the step deadline", retryable=False)
             step.update(status="failed", completed_at=timestamp, error=error)
             self._emit(connection, snapshot, "step.updated", step, timestamp)

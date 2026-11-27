@@ -36,6 +36,8 @@ A provider returns structured content on success, or `PartialOutput(content)` fo
 4. Add versioned task-completion and domain checks, followed by grounding and relevance checks on labeled evidence fixtures. Publish evaluation outcomes through the existing evaluation event. Run deterministic regressions in CI and offer separately enabled, budget-limited live evaluations.
 5. Persist immutable artifact revisions and implement one target-pricing review gate. Bind approvals to the exact revision, persist the decision and event atomically, and resume financials from the approved pricing artifact after retries or reclaim. Cross-review new revision fields and fixtures with Surya.
 
+Each provider attempt runs in a spawned child process. Use an importable provider callable and initialize any network client in the child. The worker enforces a wall-clock deadline configured by `V1_PROVIDER_TIMEOUT_SECONDS` (default 120 seconds). On timeout it terminates and joins the child, records `provider_timeout` for the step, and continues independent work. A remote provider may still complete a request already sent, so adapter-side request deadlines and retry budgets remain relevant.
+
 ## Dependency finding
 
 The ZIP was not available in this checkout. Inspection confirms the described issue in these files.

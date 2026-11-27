@@ -7,6 +7,7 @@ import time
 import psycopg
 
 from backend.config import settings
+from backend.run_worker.provider_call import ProviderTimeout, call_with_deadline
 from backend.run_worker.store import LostClaim, Store
 from backend.run_worker.workflow import InvalidOutput, PartialOutput, ProviderFailure, fake_provider
 
@@ -32,7 +33,9 @@ def execute_claim(store, claim, provider=fake_provider, lease_seconds=30):
                 if inputs is None:
                     finished.add(step_id)
                 else:
-                    active[pool.submit(provider, step_id, *inputs)] = step_id
+                    future = pool.submit(call_with_deadline, provider, step_id, *inputs,
+                                         settings.v1_provider_timeout_seconds)
+                    active[future] = step_id
             if not active:
                 if pending and not any(set(s["depends_on"]) <= finished for s in pending):
                     raise ValueError("Workflow contains an unsatisfied dependency")
@@ -43,6 +46,8 @@ def execute_claim(store, claim, provider=fake_provider, lease_seconds=30):
                 step_id = active.pop(future)
                 try:
                     output = future.result()
+                except ProviderTimeout:
+                    store.fail(run_id, token, step_id, timed_out=True)
                 except ProviderFailure:
                     store.fail(run_id, token, step_id)
                 else:
