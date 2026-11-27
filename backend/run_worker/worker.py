@@ -1,38 +1,63 @@
 """Run `python -m backend.run_worker.worker --once` or omit --once to poll."""
 import argparse
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import logging
 import time
 
 import psycopg
 
 from backend.config import settings
+from backend.run_worker.provider_call import ClaimCalls, ProviderTimeout, call_with_deadline
 from backend.run_worker.store import LostClaim, Store
-from backend.run_worker.workflow import ProviderFailure, fake_provider
+from backend.run_worker.workflow import InvalidOutput, PartialOutput, ProviderFailure, fake_provider
 
 
 def execute_claim(store, claim, provider=fake_provider, lease_seconds=30):
     run_id, token = claim
     # The manifest is frozen in PostgreSQL when submitted.
-    definitions = store.workflow(run_id, token)
-    pending = {step["step_id"]: step for step in definitions}
-    completed = set()
-    while pending:
-        ready = [step for step in pending.values() if set(step["depends_on"]) <= completed]
-        if not ready:
-            raise ValueError("Workflow contains a dependency cycle")
-        step = min(ready, key=lambda item: (item["order"], item["step_id"]))
-        step_id = step["step_id"]
-        store.renew(run_id, token, lease_seconds)
-        inputs = store.begin_step(run_id, token, step_id)
-        if inputs is not None:
-            try:
-                content = provider(step_id, *inputs)
-            except ProviderFailure:
-                store.fail(run_id, token, step_id)
-                return
-            store.complete_step(run_id, token, step_id, content)
-        completed.add(step_id)
-        del pending[step_id]
+    definitions, states = store.workflow(run_id, token)
+    finished = {name for name, status in states.items() if status in {"succeeded", "partial", "failed", "skipped"}}
+    pending = [s for s in sorted(definitions, key=lambda s: (s["order"], s["step_id"]))
+               if s["step_id"] not in finished]
+    # Two provider calls can overlap in this graph. Only the claiming thread publishes results.
+    active = {}
+    with ThreadPoolExecutor(max_workers=2) as pool, ClaimCalls() as calls:
+        while pending or active:
+            store.renew(run_id, token, lease_seconds)
+            for step in pending.copy():
+                if len(active) >= 2 or not set(step["depends_on"]) <= finished:
+                    continue
+                step_id = step["step_id"]
+                inputs = store.begin_step(run_id, token, step_id)
+                pending.remove(step)
+                if inputs is None:
+                    finished.add(step_id)
+                else:
+                    future = pool.submit(call_with_deadline, provider, step_id, *inputs,
+                                         settings.v1_provider_timeout_seconds, calls)
+                    active[future] = step_id
+            if not active:
+                if pending and not any(set(s["depends_on"]) <= finished for s in pending):
+                    raise ValueError("Workflow contains an unsatisfied dependency")
+                continue
+            # Wake the coordinator to renew even when every provider is still busy.
+            done, _ = wait(active, timeout=lease_seconds / 3, return_when=FIRST_COMPLETED)
+            for future in done:
+                step_id = active.pop(future)
+                try:
+                    output = future.result()
+                except ProviderTimeout:
+                    store.fail(run_id, token, step_id, timed_out=True)
+                except ProviderFailure:
+                    store.fail(run_id, token, step_id)
+                else:
+                    partial = isinstance(output, PartialOutput)
+                    content = output.content if partial else output
+                    try:
+                        store.complete_step(run_id, token, step_id, content, partial=partial)
+                    except InvalidOutput:
+                        store.fail(run_id, token, step_id, invalid_output=True)
+                finished.add(step_id)
     store.finish(run_id, token)
 
 
