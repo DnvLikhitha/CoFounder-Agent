@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot, RunSummary
-from backend.run_worker.workflow import MANIFEST
+from backend.run_worker.workflow import MANIFEST, STEPS, validate_output
 
 TERMINAL = {"succeeded", "partial", "failed"}
 
@@ -193,19 +193,32 @@ class Store:
 
     def workflow(self, run_id, token):
         with self._claimed(run_id, token) as (connection, snapshot):
-            return snapshot["manifest"]["steps"]
+            return snapshot["manifest"]["steps"], {s["step_id"]: s["status"] for s in snapshot["steps"]}
 
     def begin_step(self, run_id, token, step_id):
         with self._claimed(run_id, token) as (connection, snapshot):
             definition = next(s for s in snapshot["manifest"]["steps"] if s["step_id"] == step_id)
             step = next(s for s in snapshot["steps"] if s["step_id"] == step_id)
-            if step["status"] == "succeeded":
+            if step["status"] not in {"queued", "running"}:
                 return None
             states = {s["step_id"]: s["status"] for s in snapshot["steps"]}
+            required = definition["depends_on"]
+            blocked = [name for name in required if states[name] in {"partial", "failed", "skipped"}]
+            if blocked:
+                timestamp = now(connection)
+                error = dict(code="dependency_blocked", message="Required input unavailable: " + ", ".join(blocked),
+                             retryable=False)
+                step.update(status="skipped", completed_at=timestamp, error=error)
+                self._emit(connection, snapshot, "step.updated", step, timestamp)
+                return None
             upstream = {}
-            for dependency in definition["depends_on"]:
+            optional = STEPS[step_id].optional if snapshot["manifest"]["version"] == MANIFEST.version else ()
+            available_optional = [name for name in optional if states.get(name) == "succeeded" and name not in required]
+            for dependency in (*required, *available_optional):
                 artifact = connection.execute("SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
                                               (run_id, dependency)).fetchone()
+                if artifact is None and dependency in available_optional:
+                    continue
                 if states[dependency] != "succeeded" or artifact is None:
                     raise StoreError(409, "state_conflict", "Dependencies are not committed")
                 upstream[dependency] = artifact["body"]["content"]
@@ -215,28 +228,32 @@ class Store:
             self._emit(connection, snapshot, "step.updated", step, timestamp)
             return snapshot["input"], upstream
 
-    def complete_step(self, run_id, token, step_id, content):
+    def complete_step(self, run_id, token, step_id, content, *, partial=False):
         with self._claimed(run_id, token) as (connection, snapshot):
+            quality = "partial" if partial else "complete"
             previous = connection.execute("SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
                                           (run_id, step_id)).fetchone()
             if previous:
-                if previous["body"]["content"] != content:
+                if previous["body"]["content"] != content or previous["body"]["reference"]["quality"] != quality:
                     raise StoreError(409, "state_conflict", "Artifact is immutable")
                 return previous["body"]
             step = next(s for s in snapshot["steps"] if s["step_id"] == step_id)
             if step["status"] != "running":
                 raise StoreError(409, "state_conflict", "Step has not started")
+            validate_output(step_id, content)
             timestamp = now(connection)
             reference = dict(artifact_id=step_id, step_id=step_id, kind=step_id,
                              title=step_id.replace("_", " ").title(), media_type="application/json",
-                             quality="complete", created_at=timestamp,
+                             quality=quality, created_at=timestamp,
                              href=f"/api/v1/runs/{run_id}/artifacts/{step_id}")
             artifact = dict(run_id=run_id, reference=reference, content=content)
             Artifact.model_validate(artifact)
             connection.execute("INSERT INTO v1_artifacts VALUES (%s,%s,%s)", (run_id, step_id, Jsonb(artifact)))
             snapshot["artifacts"].append(reference)
             self._emit(connection, snapshot, "artifact.created", reference, timestamp)
-            step.update(status="succeeded", completed_at=timestamp)
+            error = dict(code="incomplete_output", message="Provider returned incomplete output",
+                         retryable=False) if partial else None
+            step.update(status="partial" if partial else "succeeded", completed_at=timestamp, error=error)
             self._emit(connection, snapshot, "step.updated", step, timestamp)
             evaluation = dict(evaluation_id=f"{step_id}-evaluation", step_id=step_id, artifact_id=step_id,
                               evaluator="fake-provider", evaluator_version="1", outcome="not_evaluated",
@@ -247,17 +264,23 @@ class Store:
 
     def finish(self, run_id, token):
         with self._claimed(run_id, token) as (connection, snapshot):
-            if any(s["status"] != "succeeded" for s in snapshot["steps"]):
+            if any(s["status"] not in {"succeeded", "partial", "failed", "skipped"} for s in snapshot["steps"]):
                 raise StoreError(409, "state_conflict", "Workflow is incomplete")
-            self._run_status(connection, snapshot, "succeeded", now(connection))
+            required = {s["step_id"] for s in snapshot["manifest"]["steps"] if s["required"]}
+            incomplete = [s for s in snapshot["steps"] if s["step_id"] in required and s["status"] != "succeeded"]
+            status, error = "succeeded", None
+            if incomplete:
+                status = "partial" if snapshot["artifacts"] else "failed"
+                error = next((s["error"] for s in incomplete if s["error"]), None)
+            self._run_status(connection, snapshot, status, now(connection), error)
 
-    def fail(self, run_id, token, step_id):
+    def fail(self, run_id, token, step_id, *, invalid_output=False):
         with self._claimed(run_id, token) as (connection, snapshot):
             timestamp = now(connection)
-            error = dict(code="provider_failed", message="Fake provider failed", retryable=False)
-            for step in snapshot["steps"]:
-                if step["status"] in {"queued", "running"}:
-                    step.update(status="failed" if step["step_id"] == step_id else "skipped",
-                                completed_at=timestamp, error=error)
-                    self._emit(connection, snapshot, "step.updated", step, timestamp)
-            self._run_status(connection, snapshot, "partial" if snapshot["artifacts"] else "failed", timestamp, error)
+            step = next(s for s in snapshot["steps"] if s["step_id"] == step_id)
+            if step["status"] != "running":
+                raise StoreError(409, "state_conflict", "Step is not running")
+            error = dict(code="invalid_output" if invalid_output else "provider_failed",
+                         message="Invalid provider output" if invalid_output else "Provider failed", retryable=False)
+            step.update(status="failed", completed_at=timestamp, error=error)
+            self._emit(connection, snapshot, "step.updated", step, timestamp)

@@ -7,7 +7,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
-from threading import Event
+from threading import Barrier, Event
 import time
 import unittest
 from unittest.mock import patch
@@ -26,7 +26,7 @@ from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot
 from backend.run_worker.api import app, store
 from backend.run_worker.store import LostClaim, Store, StoreError
 from backend.run_worker.worker import execute_claim
-from backend.run_worker.workflow import DEPENDENCIES, ProviderFailure, fake_provider
+from backend.run_worker.workflow import DEPENDENCIES, InvalidOutput, PartialOutput, ProviderFailure, fake_provider
 
 
 class WorkerIntegrationTests(unittest.TestCase):
@@ -273,6 +273,114 @@ class WorkerIntegrationTests(unittest.TestCase):
             return fake_provider(step_id, body, upstream)
         execute_claim(self.database, self.database.claim(), provider)
         self.assertLess(observed.index("pricing_strategy"), observed.index("financial_projections"))
+
+    def test_invalid_pricing_blocks_only_financials_while_risk_runs_concurrently(self):
+        initial = self.submit()
+        siblings = Barrier(2)
+        called = []
+
+        def provider(step_id, body, upstream):
+            called.append(step_id)
+            if step_id in {"pricing_strategy", "risk_register"}:
+                siblings.wait(timeout=5)
+                self.assertEqual(set(upstream), {"business_model"})
+            if step_id == "pricing_strategy":
+                return {"tiers": [{"tier_name": "Invalid", "price_monthly_usd": -1}]}
+            return fake_provider(step_id, body, upstream)
+
+        execute_claim(self.database, self.database.claim(), provider)
+        run_id = initial["run_id"]
+        final = self.database.snapshot("alice", run_id)
+        states = {s["step_id"]: s for s in final["steps"]}
+        self.assertEqual(final["status"], "partial")
+        self.assertEqual(states["pricing_strategy"]["error"]["code"], "invalid_output")
+        self.assertEqual(states["pricing_strategy"]["status"], "failed")
+        self.assertEqual(states["financial_projections"]["status"], "skipped")
+        self.assertEqual(states["financial_projections"]["error"]["code"], "dependency_blocked")
+        self.assertEqual(states["financial_projections"]["attempt"], 0)
+        self.assertNotIn("financial_projections", called)
+        self.assertEqual({a["artifact_id"] for a in final["artifacts"]}, {"business_model", "risk_register"})
+        self.assertEqual(replay(initial, self.database.events("alice", run_id, 0)), final)
+
+    def test_invalid_nested_outputs_leave_artifacts_and_events_untouched(self):
+        run_id = self.submit()["run_id"]
+        claim = self.database.claim()
+        invalid = {
+            "business_model": {"revenue_streams": ["malformed"]},
+            "pricing_strategy": {"tiers": [{"tier_name": "Free", "price_monthly_usd": True}]},
+            "financial_projections": {"monthly_projections": [{"month": 1, "mrr_usd": "unknown"}]},
+            "risk_register": {"risks": [{"risk_id": "r1", "mitigation_strategy": []}]},
+        }
+        for step_id, changes in invalid.items():
+            with self.subTest(step_id=step_id):
+                inputs = self.database.begin_step(*claim, step_id)
+                output = fake_provider(step_id, *inputs)
+                before = self.database.snapshot("alice", run_id)
+                with self.assertRaises(InvalidOutput):
+                    self.database.complete_step(*claim, step_id, {**output, **changes})
+                self.assertEqual(self.database.snapshot("alice", run_id), before)
+                self.assertEqual(self.database.events("alice", run_id, before["last_event_id"]), [])
+                with self.assertRaises(StoreError):
+                    self.database.artifact("alice", run_id, step_id)
+                self.database.complete_step(*claim, step_id, output)
+
+    def test_preexisting_v1_manifest_can_complete(self):
+        initial = self.submit()
+        initial["manifest"]["version"] = "fake-business-v1"
+        with self.database.connect() as connection:
+            connection.execute("UPDATE v1_runs SET initial_snapshot=%s, snapshot=%s WHERE run_id=%s",
+                               (Jsonb(initial), Jsonb(initial), initial["run_id"]))
+        execute_claim(self.database, self.database.claim())
+        final = self.database.snapshot("alice", initial["run_id"])
+        self.assertEqual(final["manifest"], initial["manifest"])
+        self.assertEqual(final["status"], "succeeded")
+        self.assertEqual(replay(initial, self.database.events("alice", initial["run_id"], 0)), final)
+
+    def test_partial_pricing_survives_reclaim_and_blocks_required_consumer(self):
+        initial = self.submit()
+        claim = self.database.claim()
+        run_id, _ = claim
+        for step_id in ["business_model", "pricing_strategy"]:
+            inputs = self.database.begin_step(*claim, step_id)
+            output = fake_provider(step_id, *inputs)
+            self.database.complete_step(*claim, step_id, output, partial=step_id == "pricing_strategy")
+        self.expire(run_id)
+
+        def remaining_provider(step_id, body, upstream):
+            self.assertEqual(step_id, "risk_register")
+            return PartialOutput(fake_provider(step_id, body, upstream))
+
+        execute_claim(Store(self.dsn), self.database.claim(), remaining_provider)
+        final = self.database.snapshot("alice", run_id)
+        self.assertEqual(final["status"], "partial")
+        self.assertEqual([s["status"] for s in final["steps"]], ["succeeded", "partial", "skipped", "partial"])
+        for step_id in ["pricing_strategy", "risk_register"]:
+            artifact = self.database.artifact("alice", run_id, step_id)
+            self.assertEqual(artifact["reference"]["quality"], "partial")
+        report = self.client.get(f"/runs/{run_id}/exports/markdown", headers=self.headers())
+        self.assertIn("Missing sections: Financial Projections.", report.text)
+        self.assertIn("Incomplete sections: Pricing Strategy, Risk Register.", report.text)
+        self.assertEqual(replay(initial, self.database.events("alice", run_id, 0)), final)
+
+    def test_optional_inputs_are_limited_to_declared_committed_artifacts(self):
+        run_id = self.submit()["run_id"]
+        claim = self.database.claim()
+        # Model a run with foundation steps already committed before the business phase.
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT snapshot FROM v1_runs WHERE run_id=%s FOR UPDATE",
+                                     (run_id,)).fetchone()
+            snapshot = row["snapshot"]
+            for name in ("startup_idea", "executive_summary"):
+                definition = dict(snapshot["manifest"]["steps"][0], step_id=name, artifact_kinds=[name])
+                snapshot["manifest"]["steps"].append(definition)
+                step = dict(snapshot["steps"][0], step_id=name, status="succeeded",
+                            completed_at=snapshot["created_at"], started_at=snapshot["created_at"], attempt=1)
+                snapshot["steps"].append(step)
+                connection.execute("INSERT INTO v1_artifacts VALUES (%s,%s,%s)",
+                                   (run_id, name, Jsonb({"content": {"source": name}})))
+            connection.execute("UPDATE v1_runs SET snapshot=%s WHERE run_id=%s", (Jsonb(snapshot), run_id))
+        _, upstream = self.database.begin_step(*claim, "business_model")
+        self.assertEqual(upstream, {"startup_idea": {"source": "startup_idea"}})
 
     def test_stream_follows_events_committed_after_subscription(self):
         initial = self.submit()

@@ -22,7 +22,19 @@ A claim uses SELECT FOR UPDATE SKIP LOCKED, a random claim token, and a 30-secon
 
 Each step completion inserts one immutable artifact, updates step state, appends artifact/step/evaluation events, and updates the snapshot in one transaction. Retrying the same artifact and content during an active claim returns the original artifact without new events. Different content conflicts. Per-run row locking serializes event allocation, and rolled-back transactions leave no event ID gaps. Terminal status has its own atomic snapshot/event transaction. A crash before that transaction is recovered by the next claim. Expected fake-provider failures produce partial or failed results with sanitized errors.
 
-The runner topologically schedules the manifest frozen at submission. A step begins only after all dependencies have succeeded and their artifacts can be read from committed database state. The provider receives those persisted values. No in-memory context supplies upstream results.
+New runs use the `fake-business-v2` manifest. The claiming worker schedules up to two provider calls concurrently and publishes results through its fenced transactions. Pricing and risk can overlap after business model commits. Financials can start as soon as business model and pricing commit. The worker can resume stored v1 manifests using their original dependency lists.
+
+Each step declares required inputs, optional inputs, and an output model in `workflow.py`. Required inputs must have a succeeded step and committed artifact. Optional inputs are passed when available at step start and never delay execution. PostgreSQL remains authoritative on reclaim.
+
+A provider returns structured content on success, or `PartialOutput(content)` for usable but incomplete work. The worker validates either payload before publication. Invalid content fails the step with `invalid_output` and publishes no artifact. A failed, partial, or skipped required upstream makes its dependent step `skipped` with error code `dependency_blocked`. Independent steps continue. The final run is partial when required work is incomplete and artifacts are available, or failed when required work is incomplete and no artifacts are available. The existing SSE reducer and UI can read these statuses and artifact quality values.
+
+## Proposed follow-up PRs
+
+1. Migrate pricing first using the existing pricing agent's prompt builder and parser with the Python worker and LLM adapter. Freeze the prompt and model profile version per run and exercise the mapping with a deterministic adapter double. Migrate business model, risk, and financials incrementally as their input and output shapes are verified.
+2. Make the adapter own model retries and per-call deadlines. Cover timeouts, rate limits, Retry-After, bounded exponential backoff with jitter, and invalid responses using a fake clock and provider. Keep database transaction/reclaim handling separate.
+3. Add capability-compatible fallback and a durable run budget. Record attempts, actual model, token use, and estimated cost across worker restarts. Test exhaustion before fallback or another request.
+4. Add versioned task-completion and domain checks, followed by grounding and relevance checks on labeled evidence fixtures. Publish evaluation outcomes through the existing evaluation event. Run deterministic regressions in CI and offer separately enabled, budget-limited live evaluations.
+5. Persist immutable artifact revisions and implement one target-pricing review gate. Bind approvals to the exact revision, persist the decision and event atomically, and resume financials from the approved pricing artifact after retries or reclaim. Cross-review new revision fields and fixtures with Surya.
 
 ## Dependency finding
 

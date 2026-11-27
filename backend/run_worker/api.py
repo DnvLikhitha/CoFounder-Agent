@@ -152,11 +152,14 @@ async def export(run_id: UUID, format: Literal["pdf", "markdown", "pptx"],
         body = await run_in_threadpool(database.artifact, user.subject, run_id, reference["artifact_id"])
         setattr(context, reference["kind"], body["content"])
     labels = {step["step_id"]: step["label"] for step in state["manifest"]["steps"]}
-    missing = [labels[step["step_id"]] for step in state["steps"] if step["status"] != "succeeded"]
+    missing = [labels[step["step_id"]] for step in state["steps"] if step["status"] in {"skipped", "failed"}]
+    degraded = [labels[step["step_id"]] for step in state["steps"] if step["status"] == "partial"]
     status = "Partial results" if state["status"] == "partial" else "Succeeded"
     notice = f"Fake-provider demonstration. {status}."
     if missing:
         notice += " Missing sections: " + ", ".join(missing) + "."
+    if degraded:
+        notice += " Incomplete sections: " + ", ".join(degraded) + "."
 
     highlights = []
     if model := context.business_model.get("model"):
