@@ -323,7 +323,32 @@ class WorkerIntegrationTests(unittest.TestCase):
         with self.database.connect() as connection:
             self.assertEqual(connection.execute("SELECT count(*) AS count FROM v1_runs").fetchone()["count"], 0)
 
+    def test_history_cursor_order_and_owner_scope(self):
+        alice = [self.submit(key=f"alice-{i}")["run_id"] for i in range(3)]
+        self.submit("bob")
+        with self.database.connect() as connection:
+            connection.execute("UPDATE v1_runs SET created_at='2000-01-01T00:00:00Z'")
+        headers = self.headers()
+        self.assertEqual(self.client.get("/runs").status_code, 401)
+        self.assertEqual(self.client.get("/runs?cursor=invalid", headers=headers).status_code, 422)
+        self.assertEqual(self.client.get("/runs?limit=0", headers=headers).status_code, 422)
+        response = self.client.get("/runs?limit=2", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        first = response.json()
+        self.assertEqual([run["run_id"] for run in first["runs"]], sorted(alice, reverse=True)[:2])
+        newest = self.submit(key="newer")["run_id"]
+        response = self.client.get("/runs", params={"limit": 2, "cursor": first["next_cursor"]}, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        last = response.json()
+        self.assertEqual([run["run_id"] for run in last["runs"]], [min(alice)])
+        self.assertIsNone(last["next_cursor"])
+        self.assertNotIn(newest, [run["run_id"] for run in last["runs"]])
+        self.assertNotIn("steps", last["runs"][0])
+
     def test_partial_and_failed_results_and_exports(self):
+        from io import BytesIO
+        from pptx import Presentation
+
         for failing_step, expected in [("pricing_strategy", "partial"), ("business_model", "failed")]:
             initial = self.submit(key=failing_step)
             def provider(step, body, upstream):
@@ -337,7 +362,16 @@ class WorkerIntegrationTests(unittest.TestCase):
             response = self.client.get(f'/runs/{initial["run_id"]}/exports/markdown', headers=self.headers())
             self.assertEqual(response.status_code, 200 if expected == "partial" else 409)
             if expected == "partial":
+                self.assertIn("Partial results", response.text)
                 self.assertIn("Missing sections", response.text)
+                self.assertIn("Business model: subscription", response.text)
+                deck = self.client.get(f'/runs/{initial["run_id"]}/exports/pptx', headers=self.headers())
+                presentation = Presentation(BytesIO(deck.content))
+                slide_text = "\n".join(shape.text for slide in presentation.slides
+                                       for shape in slide.shapes if shape.has_text_frame)
+                self.assertIn("Partial results", slide_text)
+                self.assertIn("Missing sections: Pricing Strategy", slide_text)
+                self.assertIn("Business model: subscription", slide_text)
 
     def test_exports_and_legacy_routes_registered(self):
         run_id = self.submit()["run_id"]
