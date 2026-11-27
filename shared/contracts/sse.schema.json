@@ -1,0 +1,786 @@
+{
+  "$defs": {
+    "ArtifactCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "1.0",
+          "enum": [
+            "1.0"
+          ],
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Event Id",
+          "type": "integer"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "type": {
+          "const": "artifact.created",
+          "enum": [
+            "artifact.created"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ArtifactReference"
+        }
+      },
+      "required": [
+        "contract_version",
+        "run_id",
+        "event_id",
+        "occurred_at",
+        "type",
+        "data"
+      ],
+      "title": "ArtifactCreated",
+      "type": "object"
+    },
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "step_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Step Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "media_type": {
+          "enum": [
+            "application/json",
+            "text/markdown",
+            "text/plain"
+          ],
+          "title": "Media Type",
+          "type": "string"
+        },
+        "quality": {
+          "enum": [
+            "complete",
+            "partial",
+            "fallback"
+          ],
+          "title": "Quality",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "href": {
+          "pattern": "^/api/v1/runs/[^/]+/artifacts/[^/]+$",
+          "title": "Href",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "step_id",
+        "kind",
+        "title",
+        "media_type",
+        "quality",
+        "created_at",
+        "href"
+      ],
+      "title": "ArtifactReference",
+      "type": "object"
+    },
+    "ErrorDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "title": "ErrorDetail",
+      "type": "object"
+    },
+    "EvaluationCompleted": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "1.0",
+          "enum": [
+            "1.0"
+          ],
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Event Id",
+          "type": "integer"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "type": {
+          "const": "evaluation.completed",
+          "enum": [
+            "evaluation.completed"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/EvaluationResult"
+        }
+      },
+      "required": [
+        "contract_version",
+        "run_id",
+        "event_id",
+        "occurred_at",
+        "type",
+        "data"
+      ],
+      "title": "EvaluationCompleted",
+      "type": "object"
+    },
+    "EvaluationResult": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluation_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Evaluation Id",
+          "type": "string"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Step Id"
+        },
+        "artifact_id": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Artifact Id"
+        },
+        "evaluator": {
+          "title": "Evaluator",
+          "type": "string"
+        },
+        "evaluator_version": {
+          "title": "Evaluator Version",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "passed",
+            "failed",
+            "needs_review",
+            "not_evaluated"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Score"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evaluation_id",
+        "step_id",
+        "artifact_id",
+        "evaluator",
+        "evaluator_version",
+        "outcome",
+        "score",
+        "reasons",
+        "created_at"
+      ],
+      "title": "EvaluationResult",
+      "type": "object"
+    },
+    "ReviewDecided": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "1.0",
+          "enum": [
+            "1.0"
+          ],
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Event Id",
+          "type": "integer"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "type": {
+          "const": "review.decided",
+          "enum": [
+            "review.decided"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ReviewReceipt"
+        }
+      },
+      "required": [
+        "contract_version",
+        "run_id",
+        "event_id",
+        "occurred_at",
+        "type",
+        "data"
+      ],
+      "title": "ReviewDecided",
+      "type": "object"
+    },
+    "ReviewDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "decision_id": {
+          "format": "uuid",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "comment": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comment"
+        }
+      },
+      "required": [
+        "decision_id",
+        "decision"
+      ],
+      "title": "ReviewDecision",
+      "type": "object"
+    },
+    "ReviewReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "review_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Review Id",
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/ReviewDecision"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "event_id": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Event Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run_id",
+        "review_id",
+        "decision",
+        "decided_at",
+        "event_id"
+      ],
+      "title": "ReviewReceipt",
+      "type": "object"
+    },
+    "ReviewRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "review_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Review Id",
+          "type": "string"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Step Id"
+        },
+        "artifact_ids": {
+          "items": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "type": "string"
+          },
+          "title": "Artifact Ids",
+          "type": "array"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "review_id",
+        "step_id",
+        "artifact_ids",
+        "prompt",
+        "created_at"
+      ],
+      "title": "ReviewRequest",
+      "type": "object"
+    },
+    "ReviewRequested": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "1.0",
+          "enum": [
+            "1.0"
+          ],
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Event Id",
+          "type": "integer"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "type": {
+          "const": "review.requested",
+          "enum": [
+            "review.requested"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ReviewRequest"
+        }
+      },
+      "required": [
+        "contract_version",
+        "run_id",
+        "event_id",
+        "occurred_at",
+        "type",
+        "data"
+      ],
+      "title": "ReviewRequested",
+      "type": "object"
+    },
+    "RunState": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "updated_at",
+        "completed_at",
+        "error"
+      ],
+      "title": "RunState",
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "queued",
+        "running",
+        "awaiting_review",
+        "succeeded",
+        "partial",
+        "failed"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    },
+    "RunUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "1.0",
+          "enum": [
+            "1.0"
+          ],
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Event Id",
+          "type": "integer"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "type": {
+          "const": "run.updated",
+          "enum": [
+            "run.updated"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RunState"
+        }
+      },
+      "required": [
+        "contract_version",
+        "run_id",
+        "event_id",
+        "occurred_at",
+        "type",
+        "data"
+      ],
+      "title": "RunUpdated",
+      "type": "object"
+    },
+    "StepState": {
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Step Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/StepStatus"
+        },
+        "attempt": {
+          "minimum": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Started At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "step_id",
+        "status",
+        "attempt",
+        "started_at",
+        "completed_at",
+        "error"
+      ],
+      "title": "StepState",
+      "type": "object"
+    },
+    "StepStatus": {
+      "enum": [
+        "queued",
+        "running",
+        "awaiting_review",
+        "succeeded",
+        "partial",
+        "failed",
+        "skipped"
+      ],
+      "title": "StepStatus",
+      "type": "string"
+    },
+    "StepUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "1.0",
+          "enum": [
+            "1.0"
+          ],
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "event_id": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "title": "Event Id",
+          "type": "integer"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "type": {
+          "const": "step.updated",
+          "enum": [
+            "step.updated"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/StepState"
+        }
+      },
+      "required": [
+        "contract_version",
+        "run_id",
+        "event_id",
+        "occurred_at",
+        "type",
+        "data"
+      ],
+      "title": "StepUpdated",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "artifact.created": "#/$defs/ArtifactCreated",
+      "evaluation.completed": "#/$defs/EvaluationCompleted",
+      "review.decided": "#/$defs/ReviewDecided",
+      "review.requested": "#/$defs/ReviewRequested",
+      "run.updated": "#/$defs/RunUpdated",
+      "step.updated": "#/$defs/StepUpdated"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/RunUpdated"
+    },
+    {
+      "$ref": "#/$defs/StepUpdated"
+    },
+    {
+      "$ref": "#/$defs/ArtifactCreated"
+    },
+    {
+      "$ref": "#/$defs/EvaluationCompleted"
+    },
+    {
+      "$ref": "#/$defs/ReviewRequested"
+    },
+    {
+      "$ref": "#/$defs/ReviewDecided"
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

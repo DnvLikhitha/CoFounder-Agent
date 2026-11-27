@@ -1,0 +1,21 @@
+[
+  {
+    "run_id": "00000000-0000-4000-8000-000000000002",
+    "reference": {
+      "artifact_id": "research",
+      "step_id": "research",
+      "kind": "market_research",
+      "title": "Market research",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-27T10:00:00Z",
+      "href": "/api/v1/runs/00000000-0000-4000-8000-000000000002/artifacts/research"
+    },
+    "content": {
+      "audience": "University students",
+      "findings": [
+        "Students need a focused internship search."
+      ]
+    }
+  }
+]
