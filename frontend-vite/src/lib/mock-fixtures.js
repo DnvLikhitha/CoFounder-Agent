@@ -7,8 +7,10 @@ import partialFinal from '../../../shared/contracts/fixtures/partial/final.json'
 import partialArtifacts from '../../../shared/contracts/fixtures/partial/artifacts.json'
 import partialEvents from '../../../shared/contracts/fixtures/partial/events.jsonl?raw'
 import artifactDetails from '../fixtures/artifact-details.json'
+import { fullAgentFixtures } from '../fixtures/full-agent-runs.js'
 
 export const fixtures = {
+  ...fullAgentFixtures,
   succeeded: {
     snapshot: succeededSnapshot,
     final: succeededFinal,

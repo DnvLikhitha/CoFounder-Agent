@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       fs: { allow: [root, contracts] },
-      proxy: mode === 'live' ? {
+      proxy: mode !== 'mock' ? {
         '^/api/v1(?:/|$)': {
           target: API_PROXY_TARGET || 'http://127.0.0.1:8000',
           changeOrigin: true,

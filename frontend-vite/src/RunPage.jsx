@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AgentProgressTracker, Status } from './AgentProgressTracker.jsx'
+import { AgentProgressTracker, ProgressOverview, Status } from './AgentProgressTracker.jsx'
 import { FounderReview } from './FounderReview.jsx'
 import { Evaluations, OutputSection } from './OutputSection.jsx'
 import { watchRun } from './lib/watch-run.js'
+import { summarizeProgress } from './lib/run-progress.js'
 
 const initial = { snapshot: null, connection: 'loading', message: '' }
 
@@ -42,6 +43,12 @@ function RunPage({ runId, client }) {
 
   const current = view.attempt === attempt && view.current
   const review = current && snapshot.status === 'awaiting_review' ? snapshot.pending_review : null
+  const progress = summarizeProgress(snapshot.manifest, snapshot.steps)
+  const exportable = ['succeeded', 'partial'].includes(snapshot.status)
+  function viewArtifact(id) {
+    setActiveArtifactId(id)
+    document.getElementById('outputs-title')?.focus()
+  }
   return (
     <main className="page">
       <div className="run-heading">
@@ -49,7 +56,9 @@ function RunPage({ runId, client }) {
         <h1>{snapshot.input.problem}</h1>
         <div className="run-meta">
           <span aria-live="polite"><Status status={snapshot.status} /></span>
-          {[snapshot.input.domain, snapshot.input.geography].filter(Boolean).join(' · ')}
+          <span>{[snapshot.input.domain, snapshot.input.geography].filter(Boolean).join(' · ')}</span>
+          {connection === 'connected' && <span role="status">Updates connected</span>}
+          {connection === 'closed' && <span>Run updates complete</span>}
         </div>
       </div>
       <ConnectionNotice connection={connection} message={message} refresh={refresh} />
@@ -60,21 +69,22 @@ function RunPage({ runId, client }) {
       {snapshot.status === 'failed' && (
         <p className="notice error" role="alert">{snapshot.error?.message ?? 'The run failed.'}</p>
       )}
+      <ProgressOverview progress={progress} />
       {review && (
         <FounderReview key={JSON.stringify([attempt, review.review_id, review.artifact_ids])} review={review}
           artifacts={snapshot.artifacts} client={client} runId={runId} onStale={refreshStaleReview}
-          onViewArtifact={(id) => {
-            setActiveArtifactId(id)
-            document.getElementById('outputs-title')?.focus()
-          }} />
+          onViewArtifact={viewArtifact} />
       )}
       <div className="run-grid">
-        <OutputSection artifacts={snapshot.artifacts} evaluations={snapshot.evaluations} client={client} runId={runId}
-          status={snapshot.status} activeId={activeArtifactId} onSelect={setActiveArtifactId} />
-        <AgentProgressTracker manifest={snapshot.manifest} steps={snapshot.steps} runStatus={snapshot.status} />
+        <div className="results-workspace">
+          <OutputSection artifacts={snapshot.artifacts} evaluations={snapshot.evaluations} client={client} runId={runId}
+            steps={progress.steps} status={snapshot.status} activeId={activeArtifactId} onSelect={setActiveArtifactId} />
+          {exportable && <Exports client={client} runId={runId} partial={snapshot.status === 'partial'} />}
+        </div>
+        <AgentProgressTracker steps={progress.steps} runStatus={snapshot.status} artifacts={snapshot.artifacts}
+          onViewArtifact={viewArtifact} />
       </div>
       <Evaluations evaluations={snapshot.evaluations} artifacts={snapshot.artifacts} manifest={snapshot.manifest} />
-      {['succeeded', 'partial'].includes(snapshot.status) && <Exports client={client} runId={runId} />}
     </main>
   )
 }
@@ -115,7 +125,7 @@ function ConnectionNotice({ connection, message, refresh }) {
   return null
 }
 
-function Exports({ client, runId }) {
+function Exports({ client, runId, partial }) {
   const pending = useRef(null)
   const [state, setState] = useState({ format: null, error: '' })
   useEffect(() => () => pending.current?.abort(), [])
@@ -145,6 +155,7 @@ function Exports({ client, runId }) {
   return (
     <section className="panel exports">
       <h2>Export plan</h2>
+      {partial && <p className="muted">Exports contain the available results from this partial run.</p>}
       {client.supportsExports ? (
         <div className="actions">
           {Object.entries({ markdown: 'Markdown', pdf: 'PDF', pptx: 'PowerPoint' }).map(([format, label]) => (
