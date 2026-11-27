@@ -25,7 +25,13 @@ export function HistoryPage({ client }) {
         })
       }
     } catch (error) {
-      if (!request.signal.aborted) setState((previous) => ({ ...previous, loading: false, error: error.message }))
+      if (!request.signal.aborted) {
+        const unavailable = error.status === 405 || error.status === 501
+        setState((previous) => ({
+          ...previous, loading: false, unavailable,
+          error: unavailable ? 'This API does not yet provide run history.' : error.message,
+        }))
+      }
     } finally {
       if (pending.current === request) pending.current = null
     }
@@ -43,7 +49,10 @@ export function HistoryPage({ client }) {
     <main className="page narrow">
       <header className="page-heading"><h1>Run history</h1><p>Open a run to see its progress and outputs.</p></header>
       {state.error && (
-        <div className="notice error"><p role="alert">{state.error}</p><button onClick={() => load(state.cursor)}>Retry</button></div>
+        <div className="notice error">
+          <p role="alert">{state.error}</p>
+          {!state.unavailable && <button onClick={() => load(state.cursor)}>Retry</button>}
+        </div>
       )}
       <ul className="history-list">
         {state.runs.map((run) => (

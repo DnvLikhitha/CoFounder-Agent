@@ -1,12 +1,34 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { BrowserRouter, Link, NavLink, Route, Routes } from 'react-router-dom'
 import { HistoryPage } from './HistoryPage.jsx'
 import { InputForm } from './InputForm.jsx'
-import { client, mockMode } from './lib/index.js'
+import { mockClient, mockMode } from './lib/index.js'
+import { createLiveClient } from './lib/live-client.js'
 
 const RunRoute = lazy(() => import('./RunPage.jsx'))
+const accessTokenKey = 'cofounder-vite.live-access-token'
 
 export default function App() {
+  const [accessToken, setAccessToken] = useState(() =>
+    mockMode ? null : window.sessionStorage.getItem(accessTokenKey))
+  const client = useMemo(() => {
+    if (mockMode) return mockClient
+    return accessToken ? createLiveClient(undefined, { accessToken }) : null
+  }, [accessToken])
+
+  function connect(event) {
+    event.preventDefault()
+    const token = new FormData(event.currentTarget).get('access-token').trim()
+    if (!token) return
+    window.sessionStorage.setItem(accessTokenKey, token)
+    setAccessToken(token)
+  }
+
+  function disconnect() {
+    window.sessionStorage.removeItem(accessTokenKey)
+    setAccessToken(null)
+  }
+
   return (
     <BrowserRouter>
       <a className="skip-link" href="#main">Skip to content</a>
@@ -18,10 +40,11 @@ export default function App() {
             <NavLink to="/history">History</NavLink>
           </nav>
           <span className="mode">{mockMode ? 'Mock mode' : 'Live API'}</span>
+          {!mockMode && client && <button type="button" onClick={disconnect}>Disconnect API</button>}
         </div>
       </header>
       <div id="main" tabIndex={-1}>
-        <Routes>
+        {client ? <Routes>
           <Route path="/" element={
             <main className="page narrow">
               <header className="page-heading">
@@ -40,7 +63,20 @@ export default function App() {
           <Route path="*" element={
             <main className="page narrow"><h1>Page not found</h1><Link to="/">Start a run</Link></main>
           } />
-        </Routes>
+        </Routes> : (
+          <main className="page narrow">
+            <header className="page-heading">
+              <h1>Connect to the run API</h1>
+              <p>Enter a short-lived access token issued for this API.</p>
+            </header>
+            <form className="panel" onSubmit={connect}>
+              <label htmlFor="access-token">API access token</label>
+              <input className="input-surface" id="access-token" name="access-token"
+                type="password" autoComplete="off" spellCheck={false} required />
+              <p><button type="submit" className="primary">Connect</button></p>
+            </form>
+          </main>
+        )}
       </div>
     </BrowserRouter>
   )

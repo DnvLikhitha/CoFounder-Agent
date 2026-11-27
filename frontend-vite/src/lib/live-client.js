@@ -5,9 +5,11 @@ import { ProtocolError } from './run-state.js'
 const runsPath = '/api/v1/runs'
 const runPath = (runId) => `${runsPath}/${encodeURIComponent(runId)}`
 
-export function createLiveClient(fetcher = globalThis.fetch) {
+export function createLiveClient(fetcher = globalThis.fetch, { accessToken } = {}) {
   async function request(path, options) {
-    const response = await fetcher(path, options)
+    const headers = { ...options?.headers }
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+    const response = await fetcher(path, { cache: 'no-store', ...options, headers })
     if (response.ok) return response
     const body = await response.json().catch(() => null)
     throw new ApiError(body?.error?.message ?? `API request failed (HTTP ${response.status}).`, {
@@ -54,8 +56,8 @@ export function createLiveClient(fetcher = globalThis.fetch) {
     decideReview(runId, reviewId, decision, { signal } = {}) {
       return post(`${runPath(runId)}/reviews/${encodeURIComponent(reviewId)}/decisions`, decision, signal)
     },
-    async downloadExport(runId, format) {
-      const response = await request(`${runPath(runId)}/exports/${encodeURIComponent(format)}`)
+    async downloadExport(runId, format, { signal } = {}) {
+      const response = await request(`${runPath(runId)}/exports/${encodeURIComponent(format)}`, { signal })
       const disposition = response.headers.get('Content-Disposition') ?? ''
       const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
       const plain = disposition.match(/filename=(?:"([^"]+)"|([^;]+))/i)

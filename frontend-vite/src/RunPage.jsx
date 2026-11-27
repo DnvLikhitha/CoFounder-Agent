@@ -127,15 +127,18 @@ function Review({ review, artifacts, client, runId, refresh }) {
 }
 
 function Exports({ client, runId }) {
-  const pending = useRef(false)
+  const pending = useRef(null)
   const [state, setState] = useState({ format: null, error: '' })
+  useEffect(() => () => pending.current?.abort(), [])
 
   async function download(format) {
     if (pending.current) return
-    pending.current = true
+    const request = new AbortController()
+    pending.current = request
     setState({ format, error: '' })
     try {
-      const { blob, filename } = await client.downloadExport(runId, format)
+      const { blob, filename } = await client.downloadExport(runId, format, { signal: request.signal })
+      if (request.signal.aborted) return
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -144,9 +147,9 @@ function Exports({ client, runId }) {
       setTimeout(() => URL.revokeObjectURL(url), 1000)
       setState({ format: null, error: '' })
     } catch (error) {
-      setState({ format: null, error: error.message })
+      if (!request.signal.aborted) setState({ format: null, error: error.message })
     } finally {
-      pending.current = false
+      pending.current = null
     }
   }
 
