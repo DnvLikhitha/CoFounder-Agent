@@ -20,7 +20,7 @@ For live mode, start both the FastAPI API and the separate PostgreSQL worker. Fo
 npm.cmd run dev:live
 ```
 
-On **Connect to the run API**, enter the short-lived bearer token from the local token instructions. Use the issued access token for this API. Keep the JWT signing secret in the backend. The app keeps the access token in this tab's session storage so a refresh can resume the run. Use **Disconnect API** to clear it and enter a replacement token. This is a local integration flow pending production sign-in and token refresh.
+On **Connect to the run API**, enter the short-lived bearer token from the local token instructions. Keep the JWT signing secret in the backend. The app keeps the token in this tab's session storage so a refresh can resume the run. If the API returns HTTP 401, the app clears the token and run view and prompts for a replacement. **Disconnect API** also clears the local session. This is a local integration flow pending production sign-in and token refresh.
 
 The browser uses relative `/api/v1` requests. The Vite dev server proxies them to `http://127.0.0.1:8000` by default. If the worker listens elsewhere, set `API_PROXY_TARGET=http://127.0.0.1:8001` in `frontend-vite/.env.live.local` or in the shell before starting Vite. The target is read by Vite's server configuration. Keep provider keys in the backend environment.
 
@@ -34,6 +34,8 @@ npm.cmd run build:live
 ```
 
 Both builds write to `dist/`. The live build needs same-origin routing for `/api/v1` to the worker, including unbuffered SSE, and an SPA fallback to `index.html` for browser routes such as `/history` and `/run/:runId`.
+
+See the [React cutover readiness report](RELEASE_READINESS.md) for the tested candidate, rollback rehearsal, and staging gates.
 
 ## Integration
 

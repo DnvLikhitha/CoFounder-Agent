@@ -24,6 +24,28 @@ function loadFixtures(scenario) {
 const fixtures = { succeeded: loadFixtures('succeeded'), partial: loadFixtures('partial') }
 const scenarios = Object.entries(fixtures)
 
+test('live authentication failure expires the session and owner-scoped 404 does not', async () => {
+  let status = 401
+  let notifications = 0
+  const client = createLiveClient(async () => Response.json({ error: { message: 'Denied' } }, { status }), {
+    accessToken: 'test-token',
+    onUnauthorized: () => { notifications += 1 },
+  })
+  const { run_id } = fixtures.succeeded.snapshot
+  const controller = new AbortController()
+  await assert.rejects(client.streamEvents(run_id, {
+    after: 0, signal: controller.signal, onOpen() {}, onFrame() {},
+  }), { status: 401 })
+  assert.equal(notifications, 1)
+  status = 404
+  await assert.rejects(client.getRun(run_id), { status: 404 })
+  assert.equal(notifications, 1)
+  status = 401
+  controller.abort()
+  await assert.rejects(client.getRun(run_id, { signal: controller.signal }), { status: 401 })
+  assert.equal(notifications, 1)
+})
+
 test('loads exact v1 artifact revisions and handles missing or unsafe evidence', () => {
   const { snapshot, artifacts } = fixtures.partial
   const research = artifacts[0]
