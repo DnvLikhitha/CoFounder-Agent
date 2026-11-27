@@ -123,10 +123,14 @@ async def events(request: Request, run_id: UUID, user: OwnerDependency, database
             except psycopg.Error:
                 return  # Reconnect from the persisted cursor after a transient outage.
             for event in batch:
+                if time.time() >= user.expires_at:
+                    return
                 yield f'id: {event["event_id"]}\nevent: {event["type"]}\ndata: {json.dumps(event)}\n\n'
                 cursor = event["event_id"]
                 if event["type"] == "run.updated" and event["data"]["status"] in TERMINAL:
                     return
+            if time.time() >= user.expires_at:
+                return
             if time.monotonic() - heartbeat >= 15:
                 yield ": keepalive\n\n"
                 heartbeat = time.monotonic()

@@ -13,8 +13,9 @@ import sys
 from tempfile import TemporaryDirectory
 from threading import Barrier, Event
 import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -550,6 +551,35 @@ class WorkerIntegrationTests(unittest.TestCase):
                 response = stream.result(timeout=10)
             events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
             self.assertEqual(replay(initial, events), self.database.snapshot("alice", initial["run_id"]))
+        finally:
+            app.dependency_overrides[store] = lambda: Store(self.dsn)
+
+    def test_stream_expiring_during_database_read_can_replay_with_fresh_token(self):
+        run_id = self.submit()["run_id"]
+        self.database.claim()
+        expiry = int(time.time()) + 60
+        clock = Mock(return_value=expiry - 1)
+        database = Store(self.dsn)
+        original_events = database.events
+
+        def read_events(*args):
+            batch = original_events(*args)
+            clock.return_value = expiry
+            return batch
+
+        app.dependency_overrides[store] = lambda: database
+        path = f"/runs/{run_id}/events"
+        try:
+            with patch("backend.run_worker.api.time", SimpleNamespace(time=clock, monotonic=time.monotonic)), \
+                 patch.object(database, "events", side_effect=read_events):
+                ended = self.client.get(path, headers=self.headers(exp=expiry))
+            self.assertEqual(ended.status_code, 200)
+            self.assertEqual(ended.content, b"")
+            with patch("backend.run_worker.worker.call_with_deadline", inline_call):
+                self.expire(run_id)
+                execute_claim(database, database.claim())
+            resumed = self.client.get(path, headers={**self.headers(), "Last-Event-ID": "0"})
+            self.assertIn("id: 1\nevent: run.updated", resumed.text)
         finally:
             app.dependency_overrides[store] = lambda: Store(self.dsn)
 
