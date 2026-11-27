@@ -85,7 +85,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         cls.schema = "worker_test_" + uuid4().hex
         with psycopg.connect(cls.base_dsn) as connection:
             connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(cls.schema)))
-        cls.dsn = make_conninfo(cls.base_dsn, options=f"-csearch_path={cls.schema}")
+        cls.dsn = make_conninfo(cls.base_dsn, options=f"-csearch_path={cls.schema} -cTimeZone=UTC")
         cls.database = Store(cls.dsn)
         cls.database.migrate()
         cls.database.migrate()
@@ -352,16 +352,20 @@ class WorkerIntegrationTests(unittest.TestCase):
             path = f'/runs/{run_id}/reviews/{review["review_id"]}/decisions'
             body = {"decision_id": str(uuid4()), "decision": verdict}
             self.assertEqual(self.client.post(path, headers=self.headers("bob"), json=body).status_code, 404)
-            response = self.client.post(path, headers=self.headers(), json=body)
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(self.client.post(path, headers=self.headers(), json=body).json(), response.json())
+            receipt = self.client.post(path, headers=self.headers(), json=body)
+            self.assertEqual(receipt.status_code, 200)
+            self.assertEqual(self.client.post(path, headers=self.headers(), json=body).json(), receipt.json())
             self.assertEqual(self.client.post(path, headers=self.headers(), json={**body, "comment": "changed"}).status_code, 409)
             if verdict == "approve":
                 restarted = Store(self.dsn)
                 execute_claim(restarted, restarted.claim(), Mock(side_effect=AssertionError("Agents already completed")))
-            final = self.database.snapshot("alice", run_id)
+            final = self.client.get(f"/runs/{run_id}", headers=self.headers()).json()
             self.assertEqual(final["status"], expected)
-            self.assertEqual(replay(initial, self.database.events("alice", run_id, 0)), final)
+            stream = self.client.get(f"/runs/{run_id}/events", headers=self.headers())
+            events = [json.loads(line[6:]) for line in stream.text.splitlines() if line.startswith("data: ")]
+            decision = next(event["data"] for event in events if event["type"] == "review.decided")
+            self.assertEqual(decision, receipt.json())
+            self.assertEqual(replay(initial, events), final)
 
     def test_live_worker_marks_budget_failure_before_dispatch(self):
         initial = self.database.submit("alice", "tiny", self.body, version=LIVE_VERSION, token_limit=1)
@@ -569,6 +573,8 @@ class WorkerIntegrationTests(unittest.TestCase):
         response = self.client.get(f"/runs/{run_id}/events", headers=self.headers())
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.headers["content-type"].startswith("text/event-stream"))
+        persisted = self.database.events("alice", run_id, 0)
+        self.assertTrue(persisted[-1]["occurred_at"].endswith("+00:00"))
         events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
         for event in events:
             EVENT_ADAPTER.validate_python(event)
@@ -783,7 +789,8 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(self.database.snapshot("alice", future["run_id"]), future)
 
     def test_stream_follows_events_committed_after_subscription(self):
-        initial = self.submit()
+        initial = self.client.post("/runs", headers=self.headers(), json=self.body).json()
+        path = f'/runs/{initial["run_id"]}'
         subscribed = Event()
         streaming_store = Store(self.dsn)
         original_events = streaming_store.events
@@ -794,12 +801,12 @@ class WorkerIntegrationTests(unittest.TestCase):
         app.dependency_overrides[store] = lambda: streaming_store
         try:
             with ThreadPoolExecutor(max_workers=1) as pool, patch.object(streaming_store, "events", side_effect=read_events):
-                stream = pool.submit(self.client.get, f'/runs/{initial["run_id"]}/events', headers=self.headers())
+                stream = pool.submit(self.client.get, f"{path}/events", headers=self.headers())
                 self.assertTrue(subscribed.wait(5))
                 execute_claim(self.database, self.database.claim())
                 response = stream.result(timeout=10)
             events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
-            self.assertEqual(replay(initial, events), self.database.snapshot("alice", initial["run_id"]))
+            self.assertEqual(replay(initial, events), self.client.get(path, headers=self.headers()).json())
         finally:
             app.dependency_overrides[store] = lambda: Store(self.dsn)
 

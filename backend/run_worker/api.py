@@ -16,7 +16,8 @@ from backend.config import settings
 from backend.context import RunContext
 from backend.contracts.rest import EVENT_RESPONSES, EXPORT_RESPONSES, HistoryCursor, IdempotencyKey, error_responses
 from backend.contracts.v1 import (
-    Artifact, ArtifactList, EventId, HistoryPage, Identifier, ReviewDecision, ReviewReceipt, RunInput, RunSnapshot,
+    Artifact, ArtifactList, EVENT_ADAPTER, EventId, HistoryPage, Identifier, ReviewDecision, ReviewReceipt,
+    RunInput, RunSnapshot,
 )
 from backend.run_worker.auth import Owner, owner
 from backend.safe_logging import SafeRequests
@@ -114,7 +115,9 @@ async def events(request: Request, run_id: UUID, user: OwnerDependency, database
             for event in batch:
                 if time.time() >= user.expires_at:
                     return
-                yield f'id: {event["event_id"]}\nevent: {event["type"]}\ndata: {json.dumps(event)}\n\n'
+                # Use the same datetime serialization as REST, including for already persisted events.
+                payload = EVENT_ADAPTER.validate_python(event).model_dump(mode="json")
+                yield f'id: {event["event_id"]}\nevent: {event["type"]}\ndata: {json.dumps(payload)}\n\n'
                 cursor = event["event_id"]
                 if event["type"] == "run.updated" and event["data"]["status"] in TERMINAL:
                     return
