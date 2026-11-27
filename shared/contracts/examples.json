@@ -1,0 +1,156 @@
+{
+  "start_request": {
+    "problem": "Help students discover relevant internships.",
+    "domain": "education",
+    "geography": null
+  },
+  "start_response": {
+    "contract_version": "1.0",
+    "run_id": "00000000-0000-4000-8000-000000000001",
+    "input": {
+      "problem": "Help students discover relevant internships.",
+      "domain": "education",
+      "geography": null
+    },
+    "status": "queued",
+    "created_at": "2026-11-27T10:00:00Z",
+    "updated_at": "2026-11-27T10:00:00Z",
+    "completed_at": null,
+    "error": null,
+    "last_event_id": 0,
+    "manifest": {
+      "version": "demo-1",
+      "steps": [
+        {
+          "step_id": "research",
+          "label": "Market research",
+          "phase": "Discovery",
+          "order": 0,
+          "depends_on": [],
+          "required": true,
+          "artifact_kinds": [
+            "market_research"
+          ]
+        },
+        {
+          "step_id": "summary",
+          "label": "Executive summary",
+          "phase": "Output",
+          "order": 1,
+          "depends_on": [
+            "research"
+          ],
+          "required": true,
+          "artifact_kinds": [
+            "executive_summary"
+          ]
+        }
+      ]
+    },
+    "steps": [
+      {
+        "step_id": "research",
+        "status": "queued",
+        "attempt": 0,
+        "started_at": null,
+        "completed_at": null,
+        "error": null
+      },
+      {
+        "step_id": "summary",
+        "status": "queued",
+        "attempt": 0,
+        "started_at": null,
+        "completed_at": null,
+        "error": null
+      }
+    ],
+    "artifacts": [],
+    "evaluations": [],
+    "pending_review": null
+  },
+  "history_response": {
+    "runs": [
+      {
+        "run_id": "00000000-0000-4000-8000-000000000001",
+        "input": {
+          "problem": "Help students discover relevant internships.",
+          "domain": "education",
+          "geography": null
+        },
+        "created_at": "2026-11-27T10:00:00Z",
+        "status": "succeeded",
+        "updated_at": "2026-11-27T10:00:00Z",
+        "completed_at": "2026-11-27T10:00:00Z",
+        "error": null
+      }
+    ],
+    "next_cursor": null
+  },
+  "artifact_list": {
+    "artifacts": [
+      {
+        "artifact_id": "research",
+        "step_id": "research",
+        "kind": "market_research",
+        "title": "Market research",
+        "media_type": "application/json",
+        "quality": "complete",
+        "created_at": "2026-11-27T10:00:00Z",
+        "href": "/api/v1/runs/00000000-0000-4000-8000-000000000001/artifacts/research"
+      },
+      {
+        "artifact_id": "summary",
+        "step_id": "summary",
+        "kind": "executive_summary",
+        "title": "Executive summary",
+        "media_type": "application/json",
+        "quality": "complete",
+        "created_at": "2026-11-27T10:00:00Z",
+        "href": "/api/v1/runs/00000000-0000-4000-8000-000000000001/artifacts/summary"
+      }
+    ]
+  },
+  "artifact_response": {
+    "run_id": "00000000-0000-4000-8000-000000000001",
+    "reference": {
+      "artifact_id": "research",
+      "step_id": "research",
+      "kind": "market_research",
+      "title": "Market research",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-27T10:00:00Z",
+      "href": "/api/v1/runs/00000000-0000-4000-8000-000000000001/artifacts/research"
+    },
+    "content": {
+      "audience": "University students",
+      "findings": [
+        "Students need a focused internship search."
+      ]
+    }
+  },
+  "review_request": {
+    "decision_id": "10000000-0000-4000-8000-000000000001",
+    "decision": "approve",
+    "comment": null
+  },
+  "review_response": {
+    "run_id": "00000000-0000-4000-8000-000000000001",
+    "review_id": "review-1",
+    "decision": {
+      "decision_id": "10000000-0000-4000-8000-000000000001",
+      "decision": "approve",
+      "comment": null
+    },
+    "decided_at": "2026-11-27T10:00:00Z",
+    "event_id": 8
+  },
+  "error_response": {
+    "error": {
+      "code": "event_cursor_expired",
+      "message": "Fetch a fresh snapshot to resume.",
+      "retryable": false
+    }
+  }
+}

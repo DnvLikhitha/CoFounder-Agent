@@ -1,0 +1,98 @@
+{
+  "contract_version": "1.0",
+  "run_id": "00000000-0000-4000-8000-000000000002",
+  "input": {
+    "problem": "Help students discover relevant internships.",
+    "domain": "education",
+    "geography": null
+  },
+  "status": "partial",
+  "created_at": "2026-11-27T10:00:00Z",
+  "updated_at": "2026-11-27T10:00:00Z",
+  "completed_at": "2026-11-27T10:00:00Z",
+  "error": {
+    "code": "provider_timeout",
+    "message": "Summary generation exhausted its retries.",
+    "retryable": true
+  },
+  "last_event_id": 12,
+  "manifest": {
+    "version": "demo-1",
+    "steps": [
+      {
+        "step_id": "research",
+        "label": "Market research",
+        "phase": "Discovery",
+        "order": 0,
+        "depends_on": [],
+        "required": true,
+        "artifact_kinds": [
+          "market_research"
+        ]
+      },
+      {
+        "step_id": "summary",
+        "label": "Executive summary",
+        "phase": "Output",
+        "order": 1,
+        "depends_on": [
+          "research"
+        ],
+        "required": true,
+        "artifact_kinds": [
+          "executive_summary"
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "research",
+      "status": "succeeded",
+      "attempt": 1,
+      "started_at": "2026-11-27T10:00:00Z",
+      "completed_at": "2026-11-27T10:00:00Z",
+      "error": null
+    },
+    {
+      "step_id": "summary",
+      "status": "failed",
+      "attempt": 1,
+      "started_at": "2026-11-27T10:00:00Z",
+      "completed_at": "2026-11-27T10:00:00Z",
+      "error": {
+        "code": "provider_timeout",
+        "message": "Summary generation exhausted its retries.",
+        "retryable": true
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "research",
+      "step_id": "research",
+      "kind": "market_research",
+      "title": "Market research",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-27T10:00:00Z",
+      "href": "/api/v1/runs/00000000-0000-4000-8000-000000000002/artifacts/research"
+    }
+  ],
+  "evaluations": [
+    {
+      "evaluation_id": "research-quality",
+      "step_id": "research",
+      "artifact_id": "research",
+      "evaluator": "demo-quality",
+      "evaluator_version": "1",
+      "outcome": "needs_review",
+      "score": 0.8,
+      "reasons": [
+        "Confirm the target audience."
+      ],
+      "created_at": "2026-11-27T10:00:00Z"
+    }
+  ],
+  "pending_review": null
+}
