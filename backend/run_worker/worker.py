@@ -1,26 +1,37 @@
 """Run `python -m backend.run_worker.worker --once` or omit --once to poll."""
 import argparse
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from functools import partial
 import logging
 import time
 
 import psycopg
 
 from backend.config import settings
-from backend.run_worker.live_agents import live_provider
+from backend.llm.profiles import PROFILES, PROMPT_VERSION
+from backend.run_worker.ledger import BudgetExceeded
+from backend.run_worker.live_agents import PROMPT_FINGERPRINT, live_provider, prompt_fingerprint
 from backend.run_worker.provider_call import ClaimCalls, ProviderTimeout, call_with_deadline
 from backend.run_worker.store import LostClaim, Store
 from backend.run_worker.workflow import (
     FAKE_VERSIONS, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure, check_graph, fake_provider,
 )
+from backend.safe_logging import configure_safe_logging
 
 
-def execute_claim(store, claim, provider=None, lease_seconds=30):
+def execute_claim(store, claim, provider=None, lease_seconds=30, heartbeat_mode=None):
     run_id, token = claim
     # The manifest is frozen in PostgreSQL when submitted.
     version, definitions, states = store.workflow(run_id, token)
     if provider is None:
-        provider = live_provider if version == LIVE_VERSION else fake_provider
+        provider = fake_provider
+        if version == LIVE_VERSION:
+            configuration = store.live_configuration(run_id, token)
+            profile = configuration["model_profile"]
+            if profile not in PROFILES or configuration["prompt_version"] != PROMPT_VERSION:
+                raise ValueError("Unsupported pinned live execution profile")
+            provider = partial(live_provider, store=store, claim=claim, profile=profile,
+                               timeout=settings.v1_provider_timeout_seconds)
     dependencies = {step["step_id"]: set(step["depends_on"]) for step in definitions}
     if version == LIVE_VERSION:
         # Wait for optional producers to settle, then pass only their committed complete artifacts.
@@ -36,6 +47,8 @@ def execute_claim(store, claim, provider=None, lease_seconds=30):
     with ThreadPoolExecutor(max_workers=concurrency) as pool, ClaimCalls() as calls:
         while pending or active:
             store.renew(run_id, token, lease_seconds)
+            if heartbeat_mode is not None:
+                store.heartbeat(heartbeat_mode)
             for step in pending.copy():
                 if len(active) >= concurrency or not dependencies[step["step_id"]] <= finished:
                     continue
@@ -62,13 +75,15 @@ def execute_claim(store, claim, provider=None, lease_seconds=30):
                     store.fail(run_id, token, step_id, invalid_output=True)
                 except ProviderTimeout:
                     store.fail(run_id, token, step_id, timed_out=True)
+                except BudgetExceeded:
+                    store.fail(run_id, token, step_id, budget_exceeded=True)
                 except ProviderFailure:
                     store.fail(run_id, token, step_id)
                 else:
-                    partial = isinstance(output, PartialOutput)
-                    content = output.content if partial else output
+                    is_partial = isinstance(output, PartialOutput)
+                    content = output.content if is_partial else output
                     try:
-                        store.complete_step(run_id, token, step_id, content, partial=partial)
+                        store.complete_step(run_id, token, step_id, content, partial=is_partial)
                     except InvalidOutput:
                         store.fail(run_id, token, step_id, invalid_output=True)
                 finished.add(step_id)
@@ -76,20 +91,26 @@ def execute_claim(store, claim, provider=None, lease_seconds=30):
 
 
 def main():
+    configure_safe_logging()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     try:
         mode = settings.require_v1_provider_mode()
+        if not settings.database_url:
+            raise ValueError("DATABASE_URL is required")
+        if mode == "live" and prompt_fingerprint() != PROMPT_FINGERPRINT:
+            raise ValueError("Live prompt bundle does not match its recorded version")
     except ValueError as exc:
         parser.error(str(exc))
     versions = (LIVE_VERSION,) if mode == "live" else FAKE_VERSIONS
     store = Store(settings.database_url)
     while True:
         try:
+            store.heartbeat(mode)
             claim = store.claim(versions=versions)
             if claim:
-                execute_claim(store, claim)
+                execute_claim(store, claim, heartbeat_mode=mode)
         except LostClaim:
             logging.warning("Worker lease lost; discarded stale work")
         except (psycopg.Error, RuntimeError, ValueError):

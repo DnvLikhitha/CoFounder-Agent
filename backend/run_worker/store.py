@@ -9,7 +9,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot, RunSummary
+from backend.contracts.v1 import Artifact, EVENT_ADAPTER, ReviewReceipt, RunSnapshot, RunSummary
+from backend.llm.profiles import PROFILE_VERSION, PROMPT_VERSION
 from backend.run_worker import workflow
 
 TERMINAL = {"succeeded", "partial", "failed"}
@@ -56,7 +57,8 @@ class Store:
             connection.execute("SELECT pg_advisory_xact_lock(71894021)")
             connection.execute(Path(__file__).with_name("schema.sql").read_text())
 
-    def submit(self, owner, key, body, *, version=None):
+    def submit(self, owner, key, body, *, version=None, token_limit=500_000, cost_limit=250_000_000,
+               require_review=False):
         with self.connect() as connection:
             timestamp, run_id = now(connection), str(uuid4())
             manifest = workflow.current_manifest(version)
@@ -69,17 +71,44 @@ class Store:
                                    for step in manifest.steps],
                             artifacts=[], evaluations=[], pending_review=None)
             RunSnapshot.model_validate(snapshot)
-            connection.execute(
+            live = manifest.version == workflow.LIVE_VERSION
+            inserted = connection.execute(
                 """INSERT INTO v1_runs (run_id, owner_id, submission_key, input,
-                   initial_snapshot, snapshot, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT (owner_id, submission_key) DO NOTHING""",
-                (run_id, owner, key, Jsonb(body), Jsonb(snapshot), Jsonb(snapshot), timestamp))
+                   initial_snapshot, snapshot, created_at, model_profile, prompt_version, token_limit,
+                   cost_limit_nanousd, require_review) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (owner_id, submission_key) DO NOTHING RETURNING run_id""",
+                (run_id, owner, key, Jsonb(body), Jsonb(snapshot), Jsonb(snapshot), timestamp,
+                 PROFILE_VERSION if live else None, PROMPT_VERSION if live else None,
+                 token_limit if live else None, cost_limit if live else None, require_review)).fetchone()
+            if inserted:
+                return snapshot
             row = connection.execute(
                 "SELECT input, initial_snapshot FROM v1_runs WHERE owner_id=%s AND submission_key=%s",
                 (owner, key)).fetchone()
             if row["input"] != body:
                 raise StoreError(409, "state_conflict", "Submission key was used with different input")
             return row["initial_snapshot"]
+
+    def heartbeat(self, mode):
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO v1_worker_heartbeats (mode, seen_at) VALUES (%s,clock_timestamp())
+                   ON CONFLICT (mode) DO UPDATE SET seen_at=clock_timestamp()""", (mode,))
+
+    def ready(self, mode):
+        with self.connect() as connection:
+            connection.execute("SET LOCAL statement_timeout = '3s'")
+            # Resolve the runtime relations and migrated columns using the configured database role.
+            connection.execute("""
+                SELECT r.token_limit, r.cost_limit_nanousd, r.prompt_version, r.model_profile, r.require_review,
+                       a.body, e.body, l.charged_tokens, l.retry_at, d.receipt
+                FROM v1_runs r LEFT JOIN v1_artifacts a USING (run_id) LEFT JOIN v1_events e USING (run_id)
+                LEFT JOIN v1_llm_attempts l USING (run_id) LEFT JOIN v1_review_decisions d USING (run_id)
+                LIMIT 0""")
+            return connection.execute(
+                """SELECT 1 FROM v1_worker_heartbeats WHERE mode=%s
+                   AND seen_at > clock_timestamp() - interval '45 seconds'""", (mode,)
+            ).fetchone() is not None
 
     def snapshot(self, owner, run_id):
         with self.connect() as connection:
@@ -120,6 +149,7 @@ class Store:
 
     def events(self, owner, run_id, after, limit=100):
         with self.connect() as connection:
+            connection.execute("SET LOCAL statement_timeout = '3s'")
             rows = connection.execute(
                 """SELECT e.body FROM v1_events e JOIN v1_runs r USING (run_id)
                    WHERE r.owner_id=%s AND r.run_id=%s AND e.event_id>%s
@@ -156,11 +186,19 @@ class Store:
             token, snapshot = str(uuid4()), row["snapshot"]
             if snapshot["status"] == "queued":
                 self._run_status(connection, snapshot, "running", now(connection))
+            self._close_reservations(connection, row["run_id"])
             connection.execute(
                 """UPDATE v1_runs SET claim_token=%s,
                    lease_until=clock_timestamp() + %s * interval '1 second', snapshot=%s
                    WHERE run_id=%s""", (token, lease_seconds, Jsonb(snapshot), row["run_id"]))
             return str(row["run_id"]), token
+
+    @staticmethod
+    def _close_reservations(connection, run_id, step_id=None):
+        connection.execute(
+            """UPDATE v1_llm_attempts SET status='unknown', finished_at=clock_timestamp()
+               WHERE run_id=%s AND status='reserved' AND (%s::text IS NULL OR step_id=%s)""",
+            (run_id, step_id, step_id))
 
     @contextmanager
     def _claimed(self, run_id, token):
@@ -198,6 +236,12 @@ class Store:
         with self._claimed(run_id, token) as (connection, snapshot):
             manifest = snapshot["manifest"]
             return manifest["version"], manifest["steps"], {s["step_id"]: s["status"] for s in snapshot["steps"]}
+
+    def live_configuration(self, run_id, token):
+        with self._claimed(run_id, token) as (connection, _):
+            return connection.execute(
+                "SELECT model_profile, prompt_version FROM v1_runs WHERE run_id=%s", (run_id,)
+            ).fetchone()
 
     def begin_step(self, run_id, token, step_id):
         with self._claimed(run_id, token) as (connection, snapshot):
@@ -278,9 +322,75 @@ class Store:
             if incomplete:
                 status = "partial" if snapshot["artifacts"] else "failed"
                 error = next((s["error"] for s in incomplete if s["error"]), None)
-            self._run_status(connection, snapshot, status, now(connection), error)
+            timestamp = now(connection)
+            review_step_id = "executive_summary"
+            review = connection.execute(
+                """SELECT require_review AND NOT EXISTS
+                   (SELECT 1 FROM v1_review_decisions WHERE run_id=%s) AS pending
+                   FROM v1_runs WHERE run_id=%s""", (run_id, run_id)).fetchone()
+            review_step = next((s for s in snapshot["steps"] if s["step_id"] == review_step_id), None)
+            if status == "succeeded" and review["pending"] and review_step:
+                pending = dict(review_id=str(uuid4()), step_id=review_step_id, artifact_ids=[review_step_id],
+                               prompt="Approve this executive summary?", created_at=timestamp)
+                snapshot["pending_review"] = pending
+                self._emit(connection, snapshot, "review.requested", pending, timestamp)
+                review_step.update(status="awaiting_review", completed_at=None)
+                self._emit(connection, snapshot, "step.updated", review_step, timestamp)
+                self._run_status(connection, snapshot, "awaiting_review", timestamp)
+            else:
+                self._run_status(connection, snapshot, status, timestamp, error)
 
-    def fail(self, run_id, token, step_id, *, invalid_output=False, timed_out=False):
+    def decide_review(self, owner, run_id, review_id, decision):
+        with self.connect() as connection:
+            owned = connection.execute(
+                "SELECT snapshot FROM v1_runs WHERE run_id=%s AND owner_id=%s FOR UPDATE", (run_id, owner)
+            ).fetchone()
+            if owned is None:
+                raise StoreError(404, "not_found", "Run not found")
+            previous = connection.execute(
+                """SELECT receipt FROM v1_review_decisions
+                   WHERE run_id=%s AND (decision_id=%s OR review_id=%s)""",
+                (run_id, decision["decision_id"], review_id)).fetchall()
+            if previous:
+                for row in previous:
+                    receipt = row["receipt"]
+                    if receipt["review_id"] == review_id and receipt["decision"] == decision:
+                        return receipt
+                raise StoreError(409, "state_conflict", "Review or decision already resolved")
+            snapshot = owned["snapshot"]
+            pending = snapshot["pending_review"]
+            if pending is None or pending["review_id"] != review_id:
+                raise StoreError(404, "not_found", "Review not found")
+            if snapshot["status"] != "awaiting_review":
+                raise StoreError(409, "state_conflict", "Run is not awaiting review")
+            timestamp = now(connection)
+            receipt = dict(run_id=str(run_id), review_id=review_id, decision=decision, decided_at=timestamp,
+                           event_id=snapshot["last_event_id"] + 1)
+            ReviewReceipt.model_validate(receipt)
+            snapshot["pending_review"] = None
+            self._emit(connection, snapshot, "review.decided", receipt, timestamp)
+            approved = decision["decision"] == "approve"
+            rejection = dict(code="review_rejected", message="Founder rejected the review", retryable=False)
+            for step in snapshot["steps"]:
+                if step["step_id"] == pending["step_id"]:
+                    step.update(status="succeeded" if approved else "failed", completed_at=timestamp,
+                                error=None if approved else rejection)
+                elif not approved and step["status"] == "queued":
+                    step.update(status="skipped", completed_at=timestamp, error=rejection)
+                else:
+                    continue
+                self._emit(connection, snapshot, "step.updated", step, timestamp)
+            status = "running" if approved else ("partial" if snapshot["artifacts"] else "failed")
+            self._run_status(connection, snapshot, status, timestamp, None if approved else rejection)
+            RunSnapshot.model_validate(snapshot)
+            connection.execute(
+                "INSERT INTO v1_review_decisions VALUES (%s,%s,%s,%s)",
+                (run_id, review_id, decision["decision_id"], Jsonb(receipt)))
+            connection.execute("UPDATE v1_runs SET snapshot=%s, claim_token=NULL, lease_until=NULL WHERE run_id=%s",
+                               (Jsonb(snapshot), run_id))
+            return receipt
+
+    def fail(self, run_id, token, step_id, *, invalid_output=False, timed_out=False, budget_exceeded=False):
         with self._claimed(run_id, token) as (connection, snapshot):
             timestamp = now(connection)
             step = next(s for s in snapshot["steps"] if s["step_id"] == step_id)
@@ -290,5 +400,8 @@ class Store:
                          message="Invalid provider output" if invalid_output else "Provider failed", retryable=False)
             if timed_out:
                 error = dict(code="provider_timeout", message="Provider exceeded the step deadline", retryable=False)
+            if budget_exceeded:
+                error = dict(code="budget_exceeded", message="Run has insufficient provider budget", retryable=False)
+            self._close_reservations(connection, run_id, step_id)
             step.update(status="failed", completed_at=timestamp, error=error)
             self._emit(connection, snapshot, "step.updated", step, timestamp)

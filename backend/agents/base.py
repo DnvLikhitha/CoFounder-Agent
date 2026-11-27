@@ -1,16 +1,15 @@
 """
-agents/base.py — BaseAgent ABC with retry logic and JSON extraction
+agents/base.py — BaseAgent ABC with JSON extraction
 """
 from abc import ABC, abstractmethod
 from typing import Callable
 import json
 import re
-import asyncio
+from time import monotonic
 from loguru import logger
 
 
 class BaseAgent(ABC):
-    MAX_RETRIES = 3
     name: str = "BaseAgent"
     layer: int = 0
 
@@ -41,7 +40,7 @@ class BaseAgent(ABC):
         return ctx
 
     async def run(self, ctx, event_callback: Callable = None) -> "RunContext":
-        """Execute the agent with retry logic and SSE event emission."""
+        """Execute the agent and emit legacy SSE events."""
         ctx.status[self.name] = "running"
         if event_callback:
             await event_callback("agent_start", {
@@ -51,43 +50,23 @@ class BaseAgent(ABC):
         external_research = await self.fetch_research(ctx)
         prompt = self.build_prompt(ctx, external_research)
 
-        last_error = None
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                import time
-                t0 = time.time()
-                raw = await self.llm.complete(prompt, agent_name=self.name)
-                latency = int((time.time() - t0) * 1000)
+        try:
+            started = monotonic()
+            raw = await self.llm.complete(prompt, agent_name=self.name)
+            latency = int((monotonic() - started) * 1000)
+            parsed = self.parse_output(raw)
+            ctx = self.write_to_context(ctx, parsed)
+        except Exception:
+            ctx.status[self.name] = "error: Agent execution failed"
+            if event_callback:
+                await event_callback("agent_error", {"agent": self.name, "error": "Agent execution failed"})
+            return self.write_fallback(ctx)
 
-                parsed = self.parse_output(raw)
-                ctx = self.write_to_context(ctx, parsed)
-                ctx.status[self.name] = "done"
-
-                if event_callback:
-                    await event_callback("agent_done", {
-                        "agent": self.name,
-                        "layer": self.layer,
-                        "latency_ms": latency,
-                        "output": parsed
-                    })
-
-                logger.info(f"✅ {self.name} completed in {latency}ms")
-                return ctx
-
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(f"⚠️ {self.name} attempt {attempt + 1}/{self.MAX_RETRIES} failed: {e}")
-                if attempt < self.MAX_RETRIES - 1:
-                    await asyncio.sleep(2 ** attempt)  # exponential backoff
-
-        # All retries exhausted
-        ctx.status[self.name] = f"error: {last_error}"
+        ctx.status[self.name] = "done"
         if event_callback:
-            await event_callback("agent_error", {
-                "agent": self.name,
-                "error": last_error
+            await event_callback("agent_done", {
+                "agent": self.name, "layer": self.layer, "latency_ms": latency, "output": parsed,
             })
-        ctx = self.write_fallback(ctx)
         return ctx
 
     def extract_json(self, text: str) -> dict:
@@ -153,7 +132,7 @@ class BaseAgent(ABC):
             if result is not None:
                 return result
 
-        raise ValueError(f"Could not extract JSON from LLM output: {text[:200]}...")
+        raise ValueError("Could not extract JSON from LLM output")
 
     def safe_text(self, text: str, max_len: int = 500) -> str:
         """Sanitize user input to prevent prompt injection."""

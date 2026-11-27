@@ -72,12 +72,12 @@ async def run_pipeline_background(run_id: str, problem: str, domain: str, geogra
         # Update agent statuses
         await update_run_status(run_id, "completed", agent_statuses=ctx.status)
 
-    except Exception as e:
-        logger.error(f"Pipeline failed for {run_id}: {e}")
-        await update_run_status(run_id, "failed", error=str(e))
+    except Exception:
+        logger.error("Pipeline failed")
+        await update_run_status(run_id, "failed", error="Pipeline failed")
         run_events[run_id].append({
             "event": "pipeline_error",
-            "data": {"run_id": run_id, "error": str(e)}
+            "data": {"run_id": run_id, "error": "Pipeline failed"}
         })
 
 

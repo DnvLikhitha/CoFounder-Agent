@@ -108,6 +108,7 @@ def validate_fixture(directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Validate without writing; fail on schema or SSE drift")
+    parser.add_argument("--check-runtime", action="store_true", help="Compare the mounted API with the published contract")
     args = parser.parse_args()
     schema = EVENT_ADAPTER.json_schema()
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
@@ -128,6 +129,21 @@ def main():
             assert path.read_text(encoding="utf-8") == content, f"Regenerate {path}"
         else:
             path.write_text(content, encoding="utf-8", newline="\n")
+    if args.check_runtime:
+        from backend.main import app as main_app
+
+        mounted = next(route for route in main_app.routes if route.path == "/api/v1")
+        published, runtime = app.openapi(), mounted.app.openapi()
+        assert published["components"] == runtime["components"], "Runtime REST component schemas drifted"
+        assert set(published["paths"]) == {mounted.path + path for path in runtime["paths"]}, "Runtime paths drifted"
+        for path, operations in runtime["paths"].items():
+            expected = published["paths"][mounted.path + path]
+            assert operations.keys() == expected.keys(), f"Runtime methods drifted for {path}"
+            for method, operation in operations.items():
+                ignored = {"summary", "operationId"}
+                actual = {k: v for k, v in operation.items() if k not in ignored}
+                documented = {k: v for k, v in expected[method].items() if k not in ignored}
+                assert actual == documented, f"Runtime contract drifted for {method} {path}"
     print("Validated examples, both replay fixtures, every reconnect boundary, and schema/SSE consistency.")
 
 

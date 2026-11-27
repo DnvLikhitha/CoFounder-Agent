@@ -9,6 +9,31 @@
       "post": {
         "summary": "Start Run",
         "operationId": "start_run_api_v1_runs_post",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -30,8 +55,15 @@
               }
             }
           },
-          "404": {
-            "description": "Run, artifact, or review not found",
+          "401": {
+            "description": "Missing, invalid, or expired bearer token",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -50,8 +82,8 @@
               }
             }
           },
-          "410": {
-            "description": "Replay cursor expired; fetch a fresh snapshot",
+          "422": {
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {
@@ -60,8 +92,8 @@
               }
             }
           },
-          "422": {
-            "description": "Invalid request",
+          "500": {
+            "description": "Request processing failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -85,6 +117,11 @@
       "get": {
         "summary": "List History",
         "operationId": "list_history_api_v1_runs_get",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "limit",
@@ -105,7 +142,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 256
                 },
                 {
                   "type": "null"
@@ -126,28 +164,15 @@
               }
             }
           },
-          "404": {
-            "description": "Run, artifact, or review not found",
-            "content": {
-              "application/json": {
+          "401": {
+            "description": "Missing, invalid, or expired bearer token",
+            "headers": {
+              "WWW-Authenticate": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "type": "string"
                 }
               }
-            }
-          },
-          "409": {
-            "description": "State conflict or cursor ahead of run",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Replay cursor expired; fetch a fresh snapshot",
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -158,6 +183,16 @@
           },
           "422": {
             "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request processing failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -183,6 +218,11 @@
       "get": {
         "summary": "Get Snapshot",
         "operationId": "get_snapshot_api_v1_runs__run_id__get",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "run_id",
@@ -206,6 +246,23 @@
               }
             }
           },
+          "401": {
+            "description": "Missing, invalid, or expired bearer token",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Run, artifact, or review not found",
             "content": {
@@ -216,28 +273,18 @@
               }
             }
           },
-          "409": {
-            "description": "State conflict or cursor ahead of run",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Replay cursor expired; fetch a fresh snapshot",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "422": {
             "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request processing failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -263,6 +310,11 @@
       "get": {
         "summary": "Replay Events",
         "operationId": "replay_events_api_v1_runs__run_id__events_get",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "run_id",
@@ -316,6 +368,23 @@
               }
             }
           },
+          "401": {
+            "description": "Missing, invalid, or expired bearer token",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Run, artifact, or review not found",
             "content": {
@@ -356,6 +425,16 @@
               }
             }
           },
+          "500": {
+            "description": "Request processing failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Service temporarily unavailable",
             "content": {
@@ -365,6 +444,9 @@
                 }
               }
             }
+          },
+          "204": {
+            "description": "No more events for this terminal run"
           }
         }
       }
@@ -373,6 +455,11 @@
       "get": {
         "summary": "List Artifacts",
         "operationId": "list_artifacts_api_v1_runs__run_id__artifacts_get",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "run_id",
@@ -396,6 +483,23 @@
               }
             }
           },
+          "401": {
+            "description": "Missing, invalid, or expired bearer token",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Run, artifact, or review not found",
             "content": {
@@ -406,28 +510,18 @@
               }
             }
           },
-          "409": {
-            "description": "State conflict or cursor ahead of run",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Replay cursor expired; fetch a fresh snapshot",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "422": {
             "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request processing failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -453,6 +547,11 @@
       "get": {
         "summary": "Read Artifact",
         "operationId": "read_artifact_api_v1_runs__run_id__artifacts__artifact_id__get",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "run_id",
@@ -488,6 +587,23 @@
               }
             }
           },
+          "401": {
+            "description": "Missing, invalid, or expired bearer token",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Run, artifact, or review not found",
             "content": {
@@ -498,28 +614,18 @@
               }
             }
           },
-          "409": {
-            "description": "State conflict or cursor ahead of run",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Replay cursor expired; fetch a fresh snapshot",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "422": {
             "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Request processing failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -545,6 +651,11 @@
       "post": {
         "summary": "Submit Review",
         "operationId": "submit_review_api_v1_runs__run_id__reviews__review_id__decisions_post",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "run_id",
@@ -590,6 +701,23 @@
               }
             }
           },
+          "401": {
+            "description": "Missing, invalid, or expired bearer token",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Run, artifact, or review not found",
             "content": {
@@ -610,8 +738,8 @@
               }
             }
           },
-          "410": {
-            "description": "Replay cursor expired; fetch a fresh snapshot",
+          "422": {
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {
@@ -620,8 +748,8 @@
               }
             }
           },
-          "422": {
-            "description": "Invalid request",
+          "500": {
+            "description": "Request processing failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -647,6 +775,11 @@
       "get": {
         "summary": "Export Result",
         "operationId": "export_result_api_v1_runs__run_id__exports__format__get",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "run_id",
@@ -704,6 +837,23 @@
               }
             }
           },
+          "401": {
+            "description": "Missing, invalid, or expired bearer token",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Run, artifact, or review not found",
             "content": {
@@ -724,8 +874,8 @@
               }
             }
           },
-          "410": {
-            "description": "Replay cursor expired; fetch a fresh snapshot",
+          "422": {
+            "description": "Invalid request",
             "content": {
               "application/json": {
                 "schema": {
@@ -734,8 +884,8 @@
               }
             }
           },
-          "422": {
-            "description": "Invalid request",
+          "500": {
+            "description": "Request processing failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -1540,6 +1690,13 @@
           "skipped"
         ],
         "title": "StepStatus"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
       }
     }
   }

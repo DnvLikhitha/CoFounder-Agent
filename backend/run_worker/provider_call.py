@@ -5,11 +5,11 @@ from multiprocessing import get_context
 from threading import Lock
 from time import monotonic
 
-from backend.run_worker.workflow import InvalidOutput, ProviderFailure
+import psycopg
 
-
-class ProviderTimeout(ProviderFailure):
-    pass
+from backend.run_worker.ledger import BudgetExceeded
+from backend.run_worker.store import LostClaim
+from backend.run_worker.workflow import InvalidOutput, ProviderFailure, ProviderTimeout
 
 
 class ClaimCalls:
@@ -53,6 +53,12 @@ def _invoke(sender, provider, step_id, body, upstream):
             output = provider(step_id, body, upstream)
         except InvalidOutput:
             sender.send(("invalid_output", None))
+        except BudgetExceeded:
+            sender.send(("budget_exceeded", None))
+        except ProviderTimeout:
+            sender.send(("provider_timeout", None))
+        except (psycopg.Error, LostClaim):
+            sender.send(("interrupted", None))
         except Exception:
             sender.send(("provider_failed", None))
         else:
@@ -78,6 +84,12 @@ def call_with_deadline(provider, step_id, body, upstream, timeout, calls):
             raise ProviderTimeout()
         if status == "invalid_output":
             raise InvalidOutput(step_id)
+        if status == "budget_exceeded":
+            raise BudgetExceeded()
+        if status == "provider_timeout":
+            raise ProviderTimeout()
+        if status == "interrupted":
+            raise RuntimeError("Provider accounting was interrupted")
         if status != "ok" or process.exitcode:
             raise ProviderFailure()
         return output

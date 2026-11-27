@@ -100,7 +100,7 @@ class StartupOrchestrator:
 
             for result in parallel_results:
                 if isinstance(result, Exception):
-                    logger.error(f"Parallel agent error: {result}")
+                    logger.error("Parallel agent error")
                     continue
                 ctx.merge(result)
 
@@ -120,7 +120,7 @@ class StartupOrchestrator:
 
             for result in investor_results:
                 if isinstance(result, Exception):
-                    logger.error(f"Investor agent error: {result}")
+                    logger.error("Investor agent error")
                     continue
                 ctx.merge(result)
 
@@ -137,12 +137,12 @@ class StartupOrchestrator:
             logger.info(f"✅ Pipeline complete for run {run_id}")
             return ctx
 
-        except Exception as e:
-            logger.error(f"❌ Pipeline failed for run {run_id}: {e}")
+        except Exception:
+            logger.error("Pipeline failed")
             if event_callback:
                 await event_callback("pipeline_error", {
                     "run_id": run_id,
-                    "error": str(e),
+                    "error": "Pipeline failed",
                 })
             ctx.completed_at = datetime.utcnow()
             raise

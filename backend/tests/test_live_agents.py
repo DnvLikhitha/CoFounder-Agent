@@ -19,7 +19,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "live_agent_outputs.json"
 
 
 class FixtureGroq:
-    def __init__(self, *, api_key):
+    def __init__(self, *, api_key, **kwargs):
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.complete))
         self.outputs = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
@@ -37,13 +37,14 @@ class FixtureGroq:
             module = import_module(spec.agent.__module__)
             if prompt.startswith(module.PROMPT_TEMPLATE.splitlines()[0]):
                 payload = self.outputs[step_id]
-                return SimpleNamespace(choices=[SimpleNamespace(
+                return SimpleNamespace(model=model, usage=SimpleNamespace(prompt_tokens=300, completion_tokens=100),
+                                       choices=[SimpleNamespace(
                     message=SimpleNamespace(content=f"```json\n{json.dumps(payload)}\n```")
                 )])
         raise AssertionError("No existing agent prompt matched")
 
 
-def fixture_provider(step_id, body, upstream):
+def fixture_provider(step_id, body, upstream, **options):
     # This function is importable by spawned worker children on Windows.
     search = "Verified internship research\nSource: https://example.org/audit-source"
     fred = "Federal Funds Rate: 4.25 (synthetic fixture)"
@@ -55,7 +56,7 @@ def fixture_provider(step_id, body, upstream):
         patch("backend.agents.layer1.agent3_competitors.search_web", new=AsyncMock(return_value=search)),
         patch("backend.agents.layer2.agent9_financials.fetch_fred_data", new=AsyncMock(return_value=fred)),
     ):
-        return live_agents.live_provider(step_id, body, upstream)
+        return live_agents.live_provider(step_id, body, upstream, **options)
 
 
 def invalid_provider(step_id, body, upstream):
@@ -63,6 +64,9 @@ def invalid_provider(step_id, body, upstream):
 
 
 class LiveAgentTests(unittest.TestCase):
+    def test_versioned_prompt_bundle_matches_its_fingerprint(self):
+        self.assertEqual(live_agents.prompt_fingerprint(), live_agents.PROMPT_FINGERPRINT)
+
     def test_registration_matches_all_existing_agents_and_rejects_empty_output(self):
         legacy = {getattr(agents, name) for name in dir(agents) if name.startswith("Agent")}
         self.assertEqual(len(legacy), 16)

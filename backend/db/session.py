@@ -32,8 +32,8 @@ async def save_run(run_id: str, problem_raw: str, domain: str = None, geography:
             "agent_statuses": {},
         }).execute()
         return result.data[0] if result.data else {}
-    except Exception as e:
-        logger.error(f"Failed to save run {run_id}: {e}")
+    except Exception:
+        logger.error("Failed to save run")
         return {}
 
 
@@ -51,8 +51,8 @@ async def update_run_status(run_id: str, status: str, agent_statuses: dict = Non
             update_data["completed_at"] = datetime.utcnow().isoformat()
 
         client.table("runs").update(update_data).eq("id", run_id).execute()
-    except Exception as e:
-        logger.error(f"Failed to update run {run_id}: {e}")
+    except Exception:
+        logger.error("Failed to update run")
 
 
 async def save_agent_output(run_id: str, agent_name: str, layer: int, output_data: dict, latency_ms: int = None):
@@ -66,8 +66,8 @@ async def save_agent_output(run_id: str, agent_name: str, layer: int, output_dat
             "output_data": output_data,
             "latency_ms": latency_ms,
         }, on_conflict="run_id,agent_name").execute()
-    except Exception as e:
-        logger.error(f"Failed to save output for {agent_name}: {e}")
+    except Exception:
+        logger.error("Failed to save agent output")
 
 
 async def get_run(run_id: str) -> dict:
@@ -76,8 +76,8 @@ async def get_run(run_id: str) -> dict:
         client = get_supabase()
         result = client.table("runs").select("*").eq("id", run_id).execute()
         return result.data[0] if result.data else None
-    except Exception as e:
-        logger.error(f"Failed to fetch run {run_id}: {e}")
+    except Exception:
+        logger.error("Failed to fetch run")
         return None
 
 
@@ -87,8 +87,8 @@ async def get_agent_outputs(run_id: str) -> list:
         client = get_supabase()
         result = client.table("agent_outputs").select("*").eq("run_id", run_id).execute()
         return result.data or []
-    except Exception as e:
-        logger.error(f"Failed to fetch outputs for {run_id}: {e}")
+    except Exception:
+        logger.error("Failed to fetch run outputs")
         return []
 
 
@@ -105,8 +105,8 @@ async def get_user_runs(user_id: str, limit: int = 10) -> list:
             .execute()
         )
         return result.data or []
-    except Exception as e:
-        logger.error(f"Failed to fetch runs for user {user_id}: {e}")
+    except Exception:
+        logger.error("Failed to fetch user runs")
         return []
 
 
@@ -122,8 +122,8 @@ async def get_recent_runs(limit: int = 20) -> list:
             .execute()
         )
         return result.data or []
-    except Exception as e:
-        logger.error(f"Failed to fetch recent runs: {e}")
+    except Exception:
+        logger.error("Failed to fetch recent runs")
         return []
 
 
@@ -132,8 +132,8 @@ async def delete_run(run_id: str):
     try:
         client = get_supabase()
         client.table("runs").delete().eq("id", run_id).execute()
-    except Exception as e:
-        logger.error(f"Failed to delete run {run_id}: {e}")
+    except Exception:
+        logger.error("Failed to delete run")
 
 
 # Map agent_name -> RunContext field name for building context from DB

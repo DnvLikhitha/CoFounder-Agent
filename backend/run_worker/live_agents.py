@@ -1,10 +1,18 @@
 """Run existing agent prompts and parsers against a private, committed-input context."""
 import asyncio
+from hashlib import sha256
+from importlib import import_module
+from inspect import getsource
 import json
 import re
+from time import monotonic
 
+from backend.agents.base import BaseAgent
+from backend.agents.investor_metrics import format_metric, investor_metrics
 from backend.context import RunContext
 from backend.llm.client import LLMClient
+from backend.llm.profiles import PROFILE_VERSION, PROMPT_VERSION, SYSTEM_PROMPT
+from backend.run_worker.ledger import AttemptLedger
 from backend.run_worker.workflow import LIVE_STEPS, InvalidOutput
 
 
@@ -20,6 +28,17 @@ INVESTOR_GUIDANCE = (
     "funding, or sources."
 )
 JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
+PROMPT_FINGERPRINT = "61169cbe551e76e8e4865740b32f383337dffbf386e980a8b0f6b35fd8b18a7b"
+
+
+def prompt_fingerprint():
+    renderer_code = [run_agent, BaseAgent.safe_text, investor_metrics, format_metric]
+    definitions = [SYSTEM_PROMPT, RESEARCH_GUIDANCE, INVESTOR_GUIDANCE, sorted(RESEARCH_AGENTS),
+                   [getsource(fn).replace("\r\n", "\n") for fn in renderer_code]]
+    for step_id, spec in sorted(LIVE_STEPS.items()):
+        definitions.append([step_id, import_module(spec.agent.__module__).PROMPT_TEMPLATE,
+                            getsource(spec.agent.build_prompt).replace("\r\n", "\n")])
+    return sha256(json.dumps(definitions, ensure_ascii=True).encode()).hexdigest()
 
 
 def apply_artifact(context, kind, content):
@@ -75,10 +94,12 @@ async def run_agent(step_id, body, upstream, llm):
     return output
 
 
-def live_provider(step_id, body, upstream):
+def live_provider(step_id, body, upstream, *, store=None, claim=None, profile=PROFILE_VERSION, timeout=None):
     async def execute():
         # The child owns its own client and event loop.
-        client = LLMClient()
+        ledger = AttemptLedger(store, *claim, step_id) if store is not None else None
+        deadline = monotonic() + timeout if timeout is not None else None
+        client = LLMClient(profile=profile, ledger=ledger, deadline=deadline)
         async with client.groq:
             return await run_agent(step_id, body, upstream, client)
 
