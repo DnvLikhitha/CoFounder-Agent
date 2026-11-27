@@ -1,12 +1,16 @@
 """Real PostgreSQL tests. Set TEST_DATABASE_URL to an expendable local database."""
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from copy import deepcopy
+from dataclasses import replace
+from functools import partial
 import json
+from multiprocessing import active_children
 import os
 from pathlib import Path
 import secrets
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from threading import Barrier, Event
 import time
 import unittest
@@ -24,22 +28,31 @@ from backend.config import settings
 from backend.contracts.tool import replay
 from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot
 from backend.run_worker.api import app, store
+from backend.run_worker import workflow
 from backend.run_worker.store import LostClaim, Store, StoreError
 from backend.run_worker.worker import execute_claim
 from backend.run_worker.workflow import (
-    DEPENDENCIES, InvalidOutput, PartialOutput, ProviderFailure, fake_provider, validate_output,
+    InvalidOutput, PartialOutput, ProviderFailure, fake_provider, validate_output,
 )
 
 
 # Synchronization tests share threading Events and closures with the test process.
 # Other tests exercise the worker's production process boundary.
-def inline_call(provider, step_id, body, upstream, timeout):
+def inline_call(provider, step_id, body, upstream, timeout, calls):
     return provider(step_id, body, upstream)
 
 
 def hang_during_pricing(step_id, body, upstream):
     if step_id == "pricing_strategy":
         Event().wait()
+    return fake_provider(step_id, body, upstream)
+
+
+def wait_in_sibling_steps(marker_dir, step_id, body, upstream):
+    if step_id in {"pricing_strategy", "risk_register"}:
+        (Path(marker_dir) / f"{os.getpid()}.started").touch()
+        while not (Path(marker_dir) / "release").exists():
+            time.sleep(0.05)
     return fake_provider(step_id, body, upstream)
 
 
@@ -50,10 +63,10 @@ class PricingValidationTests(unittest.TestCase):
             with self.subTest(value=value):
                 content = {"tiers": [{"tier_name": "Starter", "price_monthly_usd": value}]}
                 if accepted:
-                    validate_output("pricing_strategy", content)
+                    validate_output("fake-business-v2", "pricing_strategy", content)
                 else:
                     with self.assertRaises(InvalidOutput):
-                        validate_output("pricing_strategy", content)
+                        validate_output("fake-business-v2", "pricing_strategy", content)
 
 
 class WorkerIntegrationTests(unittest.TestCase):
@@ -228,10 +241,38 @@ class WorkerIntegrationTests(unittest.TestCase):
         with self.assertRaises(StoreError):
             self.database.artifact("alice", run_id, "business_model")
 
+    def test_reclaim_terminates_both_active_children_before_provider_deadline(self):
+        run_id = self.submit()["run_id"]
+        claim = self.database.claim(3)
+        with TemporaryDirectory() as marker_dir, ThreadPoolExecutor(1) as pool:
+            path = Path(marker_dir)
+            with patch.object(settings, "v1_provider_timeout_seconds", 60):
+                worker = pool.submit(execute_claim, self.database, claim, partial(wait_in_sibling_steps, marker_dir), 3)
+                try:
+                    deadline = time.monotonic() + 20
+                    while len(list(path.glob("*.started"))) < 2 and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    child_pids = {int(marker.stem) for marker in path.glob("*.started")}
+                    self.assertEqual(len(child_pids), 2)
+                    self.expire(run_id)
+                    replacement = self.database.claim()
+                    self.assertEqual(replacement[0], run_id)
+                    before = self.database.snapshot("alice", run_id)
+                    with self.assertRaises(LostClaim):
+                        worker.result(timeout=5)
+                    self.assertTrue(child_pids.isdisjoint(p.pid for p in active_children()))
+                    self.assertEqual(self.database.snapshot("alice", run_id), before)
+                    self.assertEqual(self.database.events("alice", run_id, before["last_event_id"]), [])
+                finally:
+                    (path / "release").touch()
+        execute_claim(self.database, replacement)
+        self.assertEqual(self.database.snapshot("alice", run_id)["status"], "succeeded")
+
     def test_dependency_fixture_requires_committed_pricing(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/business_dependencies.json").read_text())
-        self.assertEqual(DEPENDENCIES, fixture)
-        run_id = self.submit()["run_id"]
+        initial = self.submit()
+        self.assertEqual({s["step_id"]: s["depends_on"] for s in initial["manifest"]["steps"]}, fixture)
+        run_id = initial["run_id"]
         claim = self.database.claim()
         for step in ["pricing_strategy", "financial_projections", "risk_register"]:
             with self.assertRaises(StoreError):
@@ -336,8 +377,9 @@ class WorkerIntegrationTests(unittest.TestCase):
             connection.execute("UPDATE v1_runs SET snapshot=%s WHERE run_id=%s",
                                (Jsonb(reordered), initial["run_id"]))
         observed = []
+        required = {s["step_id"]: set(s["depends_on"]) for s in initial["manifest"]["steps"]}
         def provider(step_id, body, upstream):
-            self.assertTrue(set(DEPENDENCIES[step_id]) <= set(observed))
+            self.assertTrue(required[step_id] <= set(observed))
             for dependency, content in upstream.items():
                 committed = Store(self.dsn).artifact("alice", initial["run_id"], dependency)
                 self.assertEqual(content, committed["content"])
@@ -403,7 +445,11 @@ class WorkerIntegrationTests(unittest.TestCase):
         with self.database.connect() as connection:
             connection.execute("UPDATE v1_runs SET initial_snapshot=%s, snapshot=%s WHERE run_id=%s",
                                (Jsonb(initial), Jsonb(initial), initial["run_id"]))
-        execute_claim(self.database, self.database.claim())
+        claim = self.database.claim()
+        self.database.begin_step(*claim, "business_model")
+        legacy_content = {"legacy_model": "subscription"}
+        self.database.complete_step(*claim, "business_model", legacy_content)
+        execute_claim(self.database, claim)
         final = self.database.snapshot("alice", initial["run_id"])
         self.assertEqual(final["manifest"], initial["manifest"])
         self.assertEqual(final["status"], "succeeded")
@@ -436,7 +482,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertIn("Incomplete sections: Pricing Strategy, Risk Register.", report.text)
         self.assertEqual(replay(initial, self.database.events("alice", run_id, 0)), final)
 
-    def test_optional_inputs_are_limited_to_declared_committed_artifacts(self):
+    def test_reclaim_uses_submitted_optional_inputs_and_output_schema_after_upgrade(self):
         run_id = self.submit()["run_id"]
         claim = self.database.claim()
         # Model a run with foundation steps already committed before the business phase.
@@ -455,6 +501,36 @@ class WorkerIntegrationTests(unittest.TestCase):
             connection.execute("UPDATE v1_runs SET snapshot=%s WHERE run_id=%s", (Jsonb(snapshot), run_id))
         _, upstream = self.database.begin_step(*claim, "business_model")
         self.assertEqual(upstream, {"startup_idea": {"source": "startup_idea"}})
+        self.expire(run_id)
+        # Simulate a deployment changing both the allowed inputs and the output model.
+        version = "fake-business-v3"
+        newer = dict(workflow.WORKFLOWS["fake-business-v2"])
+        newer["business_model"] = replace(newer["business_model"], optional=("executive_summary",),
+                                           output=workflow.Pricing)
+        with patch.object(workflow, "WORKFLOWS", {**workflow.WORKFLOWS, version: newer}), \
+             patch.object(workflow, "CURRENT_VERSION", version):
+            fresh = self.submit(key="after-upgrade")
+            self.assertEqual(fresh["manifest"]["version"], version)
+            reclaimed = self.database.claim()
+            self.assertEqual(reclaimed[0], run_id)
+            body, after = self.database.begin_step(*reclaimed, "business_model")
+            self.assertEqual(after, upstream)
+            content = fake_provider("business_model", body, after)
+            self.database.complete_step(*reclaimed, "business_model", content)
+            fresh_claim = self.database.claim()
+            self.database.begin_step(*fresh_claim, "business_model")
+            with self.assertRaises(InvalidOutput):
+                self.database.complete_step(*fresh_claim, "business_model", content)
+
+    def test_worker_leaves_newer_manifest_for_a_compatible_worker(self):
+        with patch.object(workflow, "CURRENT_VERSION", "future"), patch.object(
+            workflow, "WORKFLOWS", {**workflow.WORKFLOWS, "future": workflow.WORKFLOWS["fake-business-v2"]}
+        ):
+            future = self.submit()
+        supported = self.submit(key="supported")
+        self.assertEqual(self.database.claim()[0], supported["run_id"])
+        self.assertIsNone(self.database.claim())
+        self.assertEqual(self.database.snapshot("alice", future["run_id"]), future)
 
     def test_stream_follows_events_committed_after_subscription(self):
         initial = self.submit()

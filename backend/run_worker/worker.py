@@ -7,7 +7,7 @@ import time
 import psycopg
 
 from backend.config import settings
-from backend.run_worker.provider_call import ProviderTimeout, call_with_deadline
+from backend.run_worker.provider_call import ClaimCalls, ProviderTimeout, call_with_deadline
 from backend.run_worker.store import LostClaim, Store
 from backend.run_worker.workflow import InvalidOutput, PartialOutput, ProviderFailure, fake_provider
 
@@ -21,7 +21,7 @@ def execute_claim(store, claim, provider=fake_provider, lease_seconds=30):
                if s["step_id"] not in finished]
     # Two provider calls can overlap in this graph. Only the claiming thread publishes results.
     active = {}
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool, ClaimCalls() as calls:
         while pending or active:
             store.renew(run_id, token, lease_seconds)
             for step in pending.copy():
@@ -34,7 +34,7 @@ def execute_claim(store, claim, provider=fake_provider, lease_seconds=30):
                     finished.add(step_id)
                 else:
                     future = pool.submit(call_with_deadline, provider, step_id, *inputs,
-                                         settings.v1_provider_timeout_seconds)
+                                         settings.v1_provider_timeout_seconds, calls)
                     active[future] = step_id
             if not active:
                 if pending and not any(set(s["depends_on"]) <= finished for s in pending):

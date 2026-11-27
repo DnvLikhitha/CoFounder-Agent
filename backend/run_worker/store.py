@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot, RunSummary
-from backend.run_worker.workflow import MANIFEST, STEPS, validate_output
+from backend.run_worker import workflow
 
 TERMINAL = {"succeeded", "partial", "failed"}
 
@@ -59,13 +59,14 @@ class Store:
     def submit(self, owner, key, body):
         with self.connect() as connection:
             timestamp, run_id = now(connection), str(uuid4())
+            manifest = workflow.current_manifest()
             snapshot = dict(contract_version="1.0", run_id=run_id, input=body,
                             status="queued", created_at=timestamp, updated_at=timestamp,
                             completed_at=None, error=None, last_event_id=0,
-                            manifest=MANIFEST.model_dump(mode="json"),
+                            manifest=manifest.model_dump(mode="json"),
                             steps=[dict(step_id=step.step_id, status="queued", attempt=0,
                                         started_at=None, completed_at=None, error=None)
-                                   for step in MANIFEST.steps],
+                                   for step in manifest.steps],
                             artifacts=[], evaluations=[], pending_review=None)
             RunSnapshot.model_validate(snapshot)
             connection.execute(
@@ -146,8 +147,10 @@ class Store:
         with self.connect() as connection:
             row = connection.execute(
                 """SELECT * FROM v1_runs WHERE snapshot->>'status' IN ('queued','running')
+                   AND snapshot->'manifest'->>'version' = ANY(%s)
                    AND (lease_until IS NULL OR lease_until <= clock_timestamp())
-                   ORDER BY created_at, run_id FOR UPDATE SKIP LOCKED LIMIT 1""").fetchone()
+                   ORDER BY created_at, run_id FOR UPDATE SKIP LOCKED LIMIT 1""",
+                (list(workflow.WORKFLOWS),)).fetchone()
             if row is None:
                 return None
             token, snapshot = str(uuid4()), row["snapshot"]
@@ -212,7 +215,7 @@ class Store:
                 self._emit(connection, snapshot, "step.updated", step, timestamp)
                 return None
             upstream = {}
-            optional = STEPS[step_id].optional if snapshot["manifest"]["version"] == MANIFEST.version else ()
+            optional = workflow.WORKFLOWS[snapshot["manifest"]["version"]][step_id].optional
             available_optional = [name for name in optional if states.get(name) == "succeeded" and name not in required]
             for dependency in (*required, *available_optional):
                 artifact = connection.execute("SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
@@ -240,7 +243,7 @@ class Store:
             step = next(s for s in snapshot["steps"] if s["step_id"] == step_id)
             if step["status"] != "running":
                 raise StoreError(409, "state_conflict", "Step has not started")
-            validate_output(step_id, content)
+            workflow.validate_output(snapshot["manifest"]["version"], step_id, content)
             timestamp = now(connection)
             reference = dict(artifact_id=step_id, step_id=step_id, kind=step_id,
                              title=step_id.replace("_", " ").title(), media_type="application/json",

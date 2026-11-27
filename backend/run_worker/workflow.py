@@ -1,6 +1,7 @@
 """Small deterministic provider and dependency graph for the worker slice."""
 from dataclasses import dataclass
 import json
+from types import MappingProxyType
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 
@@ -67,22 +68,35 @@ class RiskRegister(Output):
 class StepSpec:
     required: tuple[str, ...]
     optional: tuple[str, ...]
-    output: type[Output]
+    output: type[Output] | None
 
 
-STEPS = {
-    "business_model": StepSpec((), ("startup_idea", "market_research", "competitor_analysis"), BusinessModel),
-    "pricing_strategy": StepSpec(("business_model",), ("startup_idea", "competitor_analysis", "customer_personas"), Pricing),
-    "financial_projections": StepSpec(("business_model", "pricing_strategy"), ("startup_idea", "market_research"), Financials),
-    "risk_register": StepSpec(("business_model",), ("startup_idea",), RiskRegister),
-}
-DEPENDENCIES = {name: list(spec.required) for name, spec in STEPS.items()}
-MANIFEST = StepManifest(version="fake-business-v2", steps=[
-    StepDefinition(step_id=name, label=name.replace("_", " ").title(),
-                   phase="Business", order=index, depends_on=dependencies,
-                   required=True, artifact_kinds=[name])
-    for index, (name, dependencies) in enumerate(DEPENDENCIES.items())
-])
+# Released entries and their output models are retained for in-flight runs.
+WORKFLOWS = MappingProxyType({
+    "fake-business-v1": MappingProxyType({
+        # The original worker validated Artifact.content as JSON only.
+        "business_model": StepSpec((), (), None),
+        "pricing_strategy": StepSpec(("business_model",), (), None),
+        "financial_projections": StepSpec(("business_model", "pricing_strategy"), (), None),
+        "risk_register": StepSpec(("business_model",), (), None),
+    }),
+    "fake-business-v2": MappingProxyType({
+        "business_model": StepSpec((), ("startup_idea", "market_research", "competitor_analysis"), BusinessModel),
+        "pricing_strategy": StepSpec(("business_model",), ("startup_idea", "competitor_analysis", "customer_personas"), Pricing),
+        "financial_projections": StepSpec(("business_model", "pricing_strategy"), ("startup_idea", "market_research"), Financials),
+        "risk_register": StepSpec(("business_model",), ("startup_idea",), RiskRegister),
+    }),
+})
+CURRENT_VERSION = "fake-business-v2"
+
+
+def current_manifest():
+    return StepManifest(version=CURRENT_VERSION, steps=[
+        StepDefinition(step_id=name, label=name.replace("_", " ").title(),
+                       phase="Business", order=index, depends_on=list(spec.required),
+                       required=True, artifact_kinds=[name])
+        for index, (name, spec) in enumerate(WORKFLOWS[CURRENT_VERSION].items())
+    ])
 
 
 class ProviderFailure(Exception):
@@ -102,9 +116,11 @@ class InvalidOutput(ValueError):
 JSON_VALUE = TypeAdapter(JsonValue)
 
 
-def validate_output(step_id, content):
+def validate_output(version, step_id, content):
     try:
-        STEPS[step_id].output.model_validate(content)
+        model = WORKFLOWS[version][step_id].output
+        if model is not None:
+            model.model_validate(content)
         JSON_VALUE.validate_python(content)
         json.dumps(content, allow_nan=False)
     except (TypeError, ValueError) as exc:
@@ -112,9 +128,6 @@ def validate_output(step_id, content):
 
 
 def fake_provider(step_id, run_input, upstream):
-    spec = STEPS[step_id]
-    if not set(spec.required) <= upstream.keys() <= set(spec.required + spec.optional):
-        raise ValueError("Provider received incorrect dependencies")
     outputs = {
         "business_model": {"model": "subscription", "revenue_streams": []},
         "pricing_strategy": {"tiers": [{"tier_name": "Starter", "price_monthly_usd": 10}]},
