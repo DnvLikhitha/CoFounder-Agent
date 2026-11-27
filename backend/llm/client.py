@@ -10,8 +10,8 @@ from backend.config import settings
 
 # Model registry — each agent specifies a preferred model
 MODEL_MAP = {
-    "fast": "llama-3.1-8b-instant",      # Fast agents (0, 4, 8, 10, 13)
-    "smart": "llama-3.3-70b-versatile",  # Heavy reasoning (1, 2, 5, 6, 9, 11, 12, 14, 15)
+    "fast": "openai/gpt-oss-20b",      # Fast agents (0, 4, 8, 10, 13)
+    "smart": "openai/gpt-oss-120b",  # Heavy reasoning (1, 2, 5, 6, 9, 11, 12, 14, 15)
     "long": "mixtral-8x7b-32768",        # Long context (3, 7)
 }
 
