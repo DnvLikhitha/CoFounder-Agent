@@ -11,9 +11,19 @@ const accessTokenKey = 'cofounder-vite.live-access-token'
 export default function App() {
   const [accessToken, setAccessToken] = useState(() =>
     mockMode ? null : window.sessionStorage.getItem(accessTokenKey))
+  const [sessionError, setSessionError] = useState('')
   const client = useMemo(() => {
     if (mockMode) return mockClient
-    return accessToken ? createLiveClient(undefined, { accessToken }) : null
+    if (!accessToken) return null
+    return createLiveClient(undefined, {
+      accessToken,
+      onUnauthorized() {
+        if (window.sessionStorage.getItem(accessTokenKey) !== accessToken) return
+        window.sessionStorage.removeItem(accessTokenKey)
+        setAccessToken(null)
+        setSessionError('The API session expired or was rejected. Enter a fresh access token.')
+      },
+    })
   }, [accessToken])
 
   function connect(event) {
@@ -21,11 +31,13 @@ export default function App() {
     const token = new FormData(event.currentTarget).get('access-token').trim()
     if (!token) return
     window.sessionStorage.setItem(accessTokenKey, token)
+    setSessionError('')
     setAccessToken(token)
   }
 
   function disconnect() {
     window.sessionStorage.removeItem(accessTokenKey)
+    setSessionError('')
     setAccessToken(null)
   }
 
@@ -70,6 +82,7 @@ export default function App() {
               <p>Enter a short-lived access token issued for this API.</p>
             </header>
             <form className="panel" onSubmit={connect}>
+              {sessionError && <p className="notice error" role="alert">{sessionError}</p>}
               <label htmlFor="access-token">API access token</label>
               <input className="input-surface" id="access-token" name="access-token"
                 type="password" autoComplete="off" spellCheck={false} required />

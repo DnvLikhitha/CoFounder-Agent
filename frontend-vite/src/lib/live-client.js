@@ -5,13 +5,14 @@ import { ProtocolError } from './run-state.js'
 const runsPath = '/api/v1/runs'
 const runPath = (runId) => `${runsPath}/${encodeURIComponent(runId)}`
 
-export function createLiveClient(fetcher = globalThis.fetch, { accessToken } = {}) {
+export function createLiveClient(fetcher = globalThis.fetch, { accessToken, onUnauthorized } = {}) {
   async function request(path, options) {
     const headers = { ...options?.headers }
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`
     const response = await fetcher(path, { cache: 'no-store', ...options, headers })
     if (response.ok) return response
     const body = await response.json().catch(() => null)
+    if (response.status === 401 && !options?.signal?.aborted) onUnauthorized?.()
     throw new ApiError(body?.error?.message ?? `API request failed (HTTP ${response.status}).`, {
       status: response.status,
       code: body?.error?.code,
