@@ -9,6 +9,10 @@ const validateSnapshot = ajv.compile({
   components: openapi.components,
   $ref: '#/components/schemas/RunSnapshot',
 })
+const validateArtifact = ajv.compile({
+  components: openapi.components,
+  $ref: '#/components/schemas/Artifact',
+})
 const validateEvent = ajv.compile(eventSchema)
 const terminalStatuses = new Set(['succeeded', 'partial', 'failed'])
 
@@ -26,6 +30,19 @@ export class ProtocolError extends Error {}
 
 export function isTerminal(status) {
   return terminalStatuses.has(status)
+}
+
+export function checkArtifact(artifact, runId, reference) {
+  if (!validateArtifact(artifact) || artifact.run_id !== runId ||
+      artifact.reference.artifact_id !== reference.artifact_id ||
+      artifact.reference.step_id !== reference.step_id ||
+      artifact.reference.kind !== reference.kind ||
+      artifact.reference.media_type !== reference.media_type ||
+      artifact.reference.quality !== reference.quality ||
+      (reference.media_type !== 'application/json' && typeof artifact.content !== 'string')) {
+    throw new ProtocolError('The artifact does not match the requested revision or v1 contract.')
+  }
+  return artifact
 }
 
 export function checkSnapshot(snapshot, runId, previousCursor = 0) {

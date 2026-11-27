@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AgentProgressTracker, Status } from './AgentProgressTracker.jsx'
+import { FounderReview } from './FounderReview.jsx'
 import { Evaluations, OutputSection } from './OutputSection.jsx'
 import { watchRun } from './lib/watch-run.js'
 
@@ -13,11 +14,16 @@ export default function RunRoute({ client }) {
 
 function RunPage({ runId, client }) {
   const [view, setView] = useState(initial)
-  const [attempt, setAttempt] = useState(0)
-  const refresh = () => setAttempt((value) => value + 1)
+  const [activeArtifactId, setActiveArtifactId] = useState(null)
+  const [reload, setReload] = useState({ attempt: 0, stale: false })
+  const { attempt, stale } = reload
+  const refresh = () => setReload((value) => ({ ...value, attempt: value.attempt + 1 }))
+  const refreshStaleReview = () => setReload((value) => ({ attempt: value.attempt + 1, stale: true }))
   useEffect(() => {
     const watcher = watchRun(client, runId, (next) => {
-      setView((previous) => ({ ...next, snapshot: next.snapshot ?? previous.snapshot }))
+      setView((previous) => ({
+        ...next, attempt, current: next.snapshot !== null, snapshot: next.snapshot ?? previous.snapshot,
+      }))
     })
     return watcher.close
   }, [client, runId, attempt])
@@ -34,6 +40,8 @@ function RunPage({ runId, client }) {
     )
   }
 
+  const current = view.attempt === attempt && view.current
+  const review = current && snapshot.status === 'awaiting_review' ? snapshot.pending_review : null
   return (
     <main className="page">
       <div className="run-heading">
@@ -45,25 +53,55 @@ function RunPage({ runId, client }) {
         </div>
       </div>
       <ConnectionNotice connection={connection} message={message} refresh={refresh} />
-      {snapshot.status === 'partial' && (
-        <p className="notice warning" role="status">
-          Available outputs are shown below. {snapshot.error?.message ?? 'Some required work could not be completed.'}
-        </p>
+      {stale && (
+        <ReviewRefreshNotice current={current} review={review} failed={view.attempt === attempt && connection === 'error'} />
       )}
+      {snapshot.status === 'partial' && <PartialNotice snapshot={snapshot} />}
       {snapshot.status === 'failed' && (
         <p className="notice error" role="alert">{snapshot.error?.message ?? 'The run failed.'}</p>
       )}
-      {snapshot.pending_review && (
-        <Review key={snapshot.pending_review.review_id} review={snapshot.pending_review}
-          artifacts={snapshot.artifacts} client={client} runId={runId} refresh={refresh} />
+      {review && (
+        <FounderReview key={JSON.stringify([attempt, review.review_id, review.artifact_ids])} review={review}
+          artifacts={snapshot.artifacts} client={client} runId={runId} onStale={refreshStaleReview}
+          onViewArtifact={(id) => {
+            setActiveArtifactId(id)
+            document.getElementById('outputs-title')?.focus()
+          }} />
       )}
       <div className="run-grid">
-        <OutputSection artifacts={snapshot.artifacts} client={client} runId={runId} status={snapshot.status} />
-        <AgentProgressTracker manifest={snapshot.manifest} steps={snapshot.steps} />
+        <OutputSection artifacts={snapshot.artifacts} evaluations={snapshot.evaluations} client={client} runId={runId}
+          status={snapshot.status} activeId={activeArtifactId} onSelect={setActiveArtifactId} />
+        <AgentProgressTracker manifest={snapshot.manifest} steps={snapshot.steps} runStatus={snapshot.status} />
       </div>
       <Evaluations evaluations={snapshot.evaluations} artifacts={snapshot.artifacts} manifest={snapshot.manifest} />
       {['succeeded', 'partial'].includes(snapshot.status) && <Exports client={client} runId={runId} />}
     </main>
+  )
+}
+
+function ReviewRefreshNotice({ current, review, failed }) {
+  let message = 'This review changed. Refreshing the current checkpoint…'
+  if (current) {
+    message = review ? 'This review changed. Check the current checkpoint before submitting again.'
+      : 'This review is no longer pending. The latest run status is shown.'
+  } else if (failed) {
+    message = 'The latest checkpoint could not be loaded.'
+  }
+  return <p className="notice" role="status">{message}</p>
+}
+
+function PartialNotice({ snapshot }) {
+  const states = new Map(snapshot.steps.map(({ step_id, status }) => [step_id, status]))
+  const incomplete = snapshot.manifest.steps
+    .filter(({ step_id, required }) => required && states.get(step_id) !== 'succeeded')
+    .map(({ label }) => label)
+  const count = snapshot.artifacts.length
+  return (
+    <p className="notice warning" role="status">
+      {count} {count === 1 ? 'artifact is' : 'artifacts are'} available.
+      {incomplete.length > 0 && ` Incomplete required steps: ${incomplete.join(', ')}.`}
+      {snapshot.error?.message && ` ${snapshot.error.message}`}
+    </p>
   )
 }
 
@@ -75,55 +113,6 @@ function ConnectionNotice({ connection, message, refresh }) {
     return <p className="notice" role="status">{message || 'Connecting to the run…'}</p>
   }
   return null
-}
-
-function Review({ review, artifacts, client, runId, refresh }) {
-  const pending = useRef(null)
-  const previous = useRef(null)
-  const [state, setState] = useState({ status: 'idle', error: '' })
-  useEffect(() => () => pending.current?.abort(), [])
-
-  async function submit(decision) {
-    if (pending.current) return
-    const payload = previous.current ?? { decision_id: crypto.randomUUID(), decision, comment: null }
-    previous.current = payload
-    const request = new AbortController()
-    pending.current = request
-    setState({ status: 'sending', error: '' })
-    try {
-      await client.decideReview(runId, review.review_id, payload, { signal: request.signal })
-      if (!request.signal.aborted) setState({ status: 'submitted', error: '' })
-    } catch (error) {
-      if (!request.signal.aborted) {
-        setState({ status: error.status === 409 ? 'conflict' : 'retry', error: error.message, decision })
-      }
-    } finally {
-      pending.current = null
-    }
-  }
-
-  const titles = artifacts.filter((artifact) => review.artifact_ids.includes(artifact.artifact_id))
-    .map((artifact) => artifact.title)
-  return (
-    <section className="panel review">
-      <h2>Review required</h2>
-      <p>{review.prompt}</p>
-      {titles.length > 0 && <p className="muted">For review · {titles.join(', ')}</p>}
-      {state.error && <p className="notice error" role="alert">{state.error}</p>}
-      <div className="actions">
-        {state.status === 'idle' && (
-          <><button className="primary" onClick={() => submit('approve')}>Approve</button>
-            <button onClick={() => submit('reject')}>Reject</button></>
-        )}
-        {state.status === 'retry' && (
-          <button onClick={() => submit(state.decision)}>Retry {state.decision === 'approve' ? 'approval' : 'rejection'}</button>
-        )}
-        {state.status === 'conflict' && <button onClick={refresh}>Refresh run</button>}
-        {state.status === 'sending' && <p role="status">Sending decision…</p>}
-        {state.status === 'submitted' && <p role="status">Decision submitted. Waiting for the run to update…</p>}
-      </div>
-    </section>
-  )
 }
 
 function Exports({ client, runId }) {

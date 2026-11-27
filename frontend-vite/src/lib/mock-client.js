@@ -100,6 +100,11 @@ export function createMockClient({
 
   return {
     supportsExports: false,
+    supportsRevisionPreview: true,
+    getRevisionPreview(runId, reviewId) {
+      const { revisionRequest } = findRun(runId)
+      return revisionRequest?.review_id === reviewId ? revisionRequest : null
+    },
     async startRun(input, { scenario = 'succeeded', signal } = {}) {
       signal?.throwIfAborted()
       if (!Object.hasOwn(fixtures, scenario)) throw new ApiError('Unknown mock scenario.', { status: 422 })
@@ -135,7 +140,7 @@ export function createMockClient({
       if (!reference || !fixture) throw new ApiError('Artifact not found.', { status: 404 })
       return { run_id: runId, reference, content: fixture.content }
     },
-    async decideReview(runId, reviewId, decision, { signal } = {}) {
+    async decideReview(runId, reviewId, decision, { signal, expectedArtifactIds } = {}) {
       signal?.throwIfAborted()
       const record = findRun(runId)
       if (record.review) {
@@ -147,8 +152,29 @@ export function createMockClient({
         throw new ApiError('This review already has a decision.', { status: 409 })
       }
       const snapshot = getSnapshot(runId, record)
-      if (snapshot.pending_review?.review_id !== reviewId) {
+      const review = snapshot.pending_review
+      if (review?.review_id !== reviewId) {
         throw new ApiError('This review is no longer pending.', { status: 409 })
+      }
+      if (expectedArtifactIds &&
+          JSON.stringify([...expectedArtifactIds].sort()) !== JSON.stringify([...review.artifact_ids].sort())) {
+        throw new ApiError('The artifact revisions for this checkpoint changed.', { status: 409 })
+      }
+      if (decision.decision === 'revise') {
+        if (!expectedArtifactIds?.length || !decision.comment?.trim()) {
+          throw new ApiError('A revision request needs an artifact revision and feedback.', { status: 422 })
+        }
+        // Preview the request only. v1 has no revision decision, receipt, or SSE event.
+        const receipt = {
+          review_id: reviewId, artifact_ids: expectedArtifactIds,
+          decision_id: decision.decision_id, comment: decision.comment,
+        }
+        const previous = record.revisionRequest
+        if (previous?.decision_id === decision.decision_id && previous.comment !== decision.comment) {
+          throw new ApiError('This decision ID was already used with different feedback.', { status: 409 })
+        }
+        saveRun(runId, { ...record, revisionRequest: receipt })
+        return receipt
       }
       const at = now()
       const receipt = {

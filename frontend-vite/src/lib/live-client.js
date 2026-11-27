@@ -53,7 +53,10 @@ export function createLiveClient(fetcher = globalThis.fetch, { accessToken } = {
     getArtifact(runId, artifactId, { signal } = {}) {
       return json(`${runPath(runId)}/artifacts/${encodeURIComponent(artifactId)}`, { signal })
     },
-    decideReview(runId, reviewId, decision, { signal } = {}) {
+    async decideReview(runId, reviewId, decision, { signal } = {}) {
+      if (decision.decision === 'revise') {
+        throw new ApiError('Revision requests are unavailable in v1.', { status: 422 })
+      }
       return post(`${runPath(runId)}/reviews/${encodeURIComponent(reviewId)}/decisions`, decision, signal)
     },
     async downloadExport(runId, format, { signal } = {}) {

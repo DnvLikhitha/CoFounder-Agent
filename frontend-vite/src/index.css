@@ -113,17 +113,23 @@ textarea { resize: vertical; }
 .section-heading, .step-title { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
 .section-heading > span { color: var(--text-secondary); font-size: .875rem; }
 .phase { margin-top: 1.15rem; }
-.phase ul, .evaluations > ul, .history-list { list-style: none; padding: 0; margin: 0; }
-.phase li, .evaluations > ul > li { border-top: 1px solid var(--border); padding: .6rem 0; }
+.phase ul, .evaluation-list, .history-list { list-style: none; padding: 0; margin: 0; }
+.phase li, .evaluation-list > li { border-top: 1px solid var(--border); padding: .6rem 0; }
 .phase small { display: block; color: var(--text-secondary); }
 .phase p { color: var(--danger); margin: .3rem 0 0; font-size: .9rem; }
 .review { border-inline-start: 4px solid var(--warning); margin-bottom: 1rem; }
+.review-artifact { border-top: 1px solid var(--border); padding: .75rem 0; }
+.review-artifact h4, .artifact-detail h4 { margin: 0 0 .4rem; }
+.review .actions, .revision-form .actions { margin-top: .65rem; }
 .evaluations, .exports { margin-top: 1rem; }
-.evaluations p { margin: .2rem 0; }
+.evaluation-list p { margin: .2rem 0; }
 .reasons { padding-left: 1.25rem; }
 .score { color: var(--accent); }
 .artifact-tabs { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
-.artifact-quality { text-transform: capitalize; }
+.artifact-revision { margin-top: .3rem; }
+.artifact-detail { display: grid; gap: 1rem; }
+.artifact-detail > section { border-top: 1px solid var(--border); padding-top: .75rem; }
+.artifact-detail ul, .review-artifact ul { margin-block: .3rem; }
 .artifact-json, .markdown-content pre {
   padding: .75rem; background: var(--background); border-radius: 8px; overflow: auto;
   white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9rem;
