@@ -26,7 +26,7 @@ export function HistoryPage({ client }) {
       }
     } catch (error) {
       if (!request.signal.aborted) {
-        const unavailable = error.status === 405 || error.status === 501
+        const unavailable = [404, 405, 501].includes(error.status)
         setState((previous) => ({
           ...previous, loading: false, unavailable,
           error: unavailable ? 'This API does not yet provide run history.' : error.message,
