@@ -23,6 +23,34 @@ function loadFixtures(scenario) {
 const fixtures = { succeeded: loadFixtures('succeeded'), partial: loadFixtures('partial') }
 const scenarios = Object.entries(fixtures)
 
+test('authenticated client includes a bearer token on REST, events, and downloads', async () => {
+  const { snapshot, artifacts, wire } = fixtures.succeeded
+  const path = `/api/v1/runs/${snapshot.run_id}`
+  const calls = []
+  const client = createLiveClient(async (url, options) => {
+    calls.push(url)
+    assert.equal(options.headers.Authorization, 'Bearer test-token')
+    assert.equal(options.cache, 'no-store')
+    if (url.includes('/events?')) {
+      assert.equal(options.headers.Accept, 'text/event-stream')
+      return new Response(wire, { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+    if (url.endsWith('/artifacts/research')) return Response.json(artifacts[0])
+    if (url.endsWith('/exports/markdown')) return new Response('# Plan')
+    if (options.method === 'POST') assert.equal(options.headers['Content-Type'], 'application/json')
+    return Response.json(snapshot)
+  }, { accessToken: 'test-token' })
+  const { signal } = new AbortController()
+  await client.startRun(snapshot.input, { signal })
+  await client.getRun(snapshot.run_id, { signal })
+  await client.getArtifact(snapshot.run_id, 'research', { signal })
+  await client.streamEvents(snapshot.run_id, { after: 0, signal, onOpen() {}, onFrame() {} })
+  await client.downloadExport(snapshot.run_id, 'markdown', { signal })
+  assert.deepEqual(calls, [
+    '/api/v1/runs', path, `${path}/artifacts/research`, `${path}/events?after=0`, `${path}/exports/markdown`,
+  ])
+})
+
 for (const [name, { snapshot, events, final, wire }] of scenarios) {
   test(`${name} replays wire and JSON fixtures to the same final snapshot`, () => {
     const frames = []

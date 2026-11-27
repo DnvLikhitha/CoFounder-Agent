@@ -1,7 +1,7 @@
 /**
  * Both clients expose startRun(input, options), getRun(runId, options),
  * listRuns(options), getArtifact(runId, artifactId, options),
- * decideReview(runId, reviewId, decision, options), downloadExport(runId, format),
+ * decideReview(runId, reviewId, decision, options), downloadExport(runId, format, options),
  * and streamEvents(runId, options). Request options accept an AbortSignal.
  *
  * streamEvents resolves at EOF and rejects on transport/protocol errors.
