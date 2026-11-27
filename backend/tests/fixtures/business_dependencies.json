@@ -1,0 +1,6 @@
+{
+  "business_model": [],
+  "pricing_strategy": ["business_model"],
+  "financial_projections": ["business_model", "pricing_strategy"],
+  "risk_register": ["business_model"]
+}

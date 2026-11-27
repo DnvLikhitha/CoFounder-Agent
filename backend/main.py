@@ -10,6 +10,7 @@ from backend.config import settings
 from backend.api.routes import run as run_router
 from backend.api.routes import stream as stream_router
 from backend.api.routes import export as export_router
+from backend.run_worker.api import app as v1_app
 
 
 @asynccontextmanager
@@ -42,6 +43,7 @@ app.add_middleware(
 app.include_router(run_router.router)
 app.include_router(stream_router.router)
 app.include_router(export_router.router)
+app.mount("/api/v1", v1_app)
 
 
 @app.get("/")

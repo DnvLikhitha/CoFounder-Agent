@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # App
     environment: str = Field(default="development", env="ENVIRONMENT")
     max_concurrent_runs: int = Field(default=5, env="MAX_CONCURRENT_RUNS")
+    database_url: str = ""
+    v1_jwt_secret: str = ""
+    v1_jwt_issuer: str = "cofounder-agent"
+    v1_jwt_audience: str = "cofounder-api"
     cors_origins: str = Field(default="http://localhost:3000", env="CORS_ORIGINS")
 
     @property
