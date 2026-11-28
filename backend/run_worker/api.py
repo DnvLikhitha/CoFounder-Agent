@@ -22,8 +22,8 @@ from backend.contracts.v1 import (
 from backend.run_worker.auth import Owner, owner
 from backend.safe_logging import SafeRequests
 from backend.run_worker.prompts_v1 import apply_artifact
-from backend.run_worker.store import Store, StoreError, TERMINAL
-from backend.run_worker.workflow import FAKE_VERSIONS, GRAPH_VERSION
+from backend.run_worker.store import Store, StoreError, TERMINAL, latest_artifacts
+from backend.run_worker.workflow import FAKE_VERSIONS, REVIEWED_VERSION
 
 app = FastAPI(title="CoFounder-Agent Run Contract", version="1.0.0")
 app.add_middleware(SafeRequests, private=True)
@@ -64,9 +64,11 @@ def submit(body: RunInput, user: OwnerDependency, database: StoreDependency,
     except ValueError as exc:
         raise StoreError(503, "service_unavailable", str(exc)) from None
     return database.submit(
-        user.subject, idempotency_key, body.model_dump(mode="json"), version=GRAPH_VERSION, graph_mode=mode,
+        user.subject, idempotency_key, body.model_dump(mode="json"), version=REVIEWED_VERSION, graph_mode=mode,
         token_limit=settings.v1_run_token_limit, cost_limit=settings.v1_run_cost_limit_nanousd,
         require_review=mode == "live" and settings.v1_require_founder_review,
+        pricing_review=settings.v1_require_pricing_review,
+        llm_evaluation=settings.v1_llm_evaluation,
     )
 
 
@@ -149,7 +151,10 @@ async def export(run_id: UUID, format: Literal["pdf", "markdown", "pptx"],
     context.created_at = datetime.fromisoformat(state["created_at"])
     context.completed_at = datetime.fromisoformat(state["completed_at"])
     context.status = {step["step_id"]: step["status"] for step in state["steps"]}
-    for reference in state["artifacts"]:
+    references = latest_artifacts(state).values() if state["manifest"]["version"] == REVIEWED_VERSION else state["artifacts"]
+    for reference in references:
+        if state["manifest"]["version"] == REVIEWED_VERSION and context.status[reference["step_id"]] not in {"succeeded", "partial"}:
+            continue
         body = await run_in_threadpool(database.artifact, user.subject, run_id, reference["artifact_id"])
         apply_artifact(context, reference["kind"], body["content"])
     labels = {step["step_id"]: step["label"] for step in state["manifest"]["steps"]}

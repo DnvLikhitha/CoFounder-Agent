@@ -1,0 +1,283 @@
+{
+  "contract_version": "1.0",
+  "run_id": "d23ccf85-c9a2-47af-b808-d2200ad18b42",
+  "input": {
+    "problem": "Set pricing for a campus internship platform.",
+    "domain": null,
+    "geography": null
+  },
+  "created_at": "2026-11-28T00:00:00Z",
+  "last_event_id": 25,
+  "artifacts": [
+    {
+      "artifact_id": "pricing_strategy",
+      "step_id": "pricing_strategy",
+      "kind": "pricing_strategy",
+      "title": "Pricing Strategy",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-28T00:00:00Z",
+      "href": "/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/pricing_strategy",
+      "revision": 1,
+      "supersedes_artifact_id": null,
+      "input_artifact_ids": []
+    },
+    {
+      "artifact_id": "financial_projections",
+      "step_id": "financial_projections",
+      "kind": "financial_projections",
+      "title": "Financial Projections",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-28T00:00:00Z",
+      "href": "/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/financial_projections",
+      "revision": 1,
+      "supersedes_artifact_id": null,
+      "input_artifact_ids": [
+        "pricing_strategy"
+      ]
+    },
+    {
+      "artifact_id": "pricing_strategy-r2",
+      "step_id": "pricing_strategy",
+      "kind": "pricing_strategy",
+      "title": "Pricing Strategy",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-28T00:00:00Z",
+      "href": "/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/pricing_strategy-r2",
+      "revision": 2,
+      "supersedes_artifact_id": "pricing_strategy",
+      "input_artifact_ids": []
+    },
+    {
+      "artifact_id": "financial_projections-r2",
+      "step_id": "financial_projections",
+      "kind": "financial_projections",
+      "title": "Financial Projections",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-28T00:00:00Z",
+      "href": "/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/financial_projections-r2",
+      "revision": 2,
+      "supersedes_artifact_id": "financial_projections",
+      "input_artifact_ids": [
+        "pricing_strategy-r2"
+      ]
+    }
+  ],
+  "evaluations": [
+    {
+      "evaluation_id": "pricing_strategy-heuristic-evaluation",
+      "step_id": "pricing_strategy",
+      "artifact_id": "pricing_strategy",
+      "evaluator": "deterministic-checks",
+      "evaluator_version": "1",
+      "method": "heuristic",
+      "outcome": "passed",
+      "score": 1,
+      "dimensions": [
+        {
+          "dimension": "task_completion",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "relevance",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "consistency",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "grounding",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "completeness",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        }
+      ],
+      "evidence": [],
+      "reasons": [],
+      "created_at": "2026-11-28T00:00:00Z"
+    },
+    {
+      "evaluation_id": "financial_projections-heuristic-evaluation",
+      "step_id": "financial_projections",
+      "artifact_id": "financial_projections",
+      "evaluator": "deterministic-checks",
+      "evaluator_version": "1",
+      "method": "heuristic",
+      "outcome": "passed",
+      "score": 1,
+      "dimensions": [
+        {
+          "dimension": "task_completion",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "relevance",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "consistency",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "grounding",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "completeness",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        }
+      ],
+      "evidence": [],
+      "reasons": [],
+      "created_at": "2026-11-28T00:00:00Z"
+    },
+    {
+      "evaluation_id": "pricing_strategy-r2-heuristic-evaluation",
+      "step_id": "pricing_strategy",
+      "artifact_id": "pricing_strategy-r2",
+      "evaluator": "deterministic-checks",
+      "evaluator_version": "1",
+      "method": "heuristic",
+      "outcome": "passed",
+      "score": 1,
+      "dimensions": [
+        {
+          "dimension": "task_completion",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "relevance",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "consistency",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "grounding",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "completeness",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        }
+      ],
+      "evidence": [],
+      "reasons": [],
+      "created_at": "2026-11-28T00:00:00Z"
+    },
+    {
+      "evaluation_id": "financial_projections-r2-heuristic-evaluation",
+      "step_id": "financial_projections",
+      "artifact_id": "financial_projections-r2",
+      "evaluator": "deterministic-checks",
+      "evaluator_version": "1",
+      "method": "heuristic",
+      "outcome": "passed",
+      "score": 1,
+      "dimensions": [
+        {
+          "dimension": "task_completion",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "relevance",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "consistency",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "grounding",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        },
+        {
+          "dimension": "completeness",
+          "outcome": "passed",
+          "reason": "Synthetic regression fixture."
+        }
+      ],
+      "evidence": [],
+      "reasons": [],
+      "created_at": "2026-11-28T00:00:00Z"
+    }
+  ],
+  "pending_review": null,
+  "status": "succeeded",
+  "updated_at": "2026-11-28T00:00:00Z",
+  "completed_at": "2026-11-28T00:00:00Z",
+  "error": null,
+  "manifest": {
+    "version": "pricing-review-contract-fixture",
+    "steps": [
+      {
+        "step_id": "pricing_strategy",
+        "label": "Pricing Strategy",
+        "phase": "Business",
+        "order": 0,
+        "required": true,
+        "depends_on": [],
+        "artifact_kinds": [
+          "pricing_strategy"
+        ]
+      },
+      {
+        "step_id": "financial_projections",
+        "label": "Financial Projections",
+        "phase": "Business",
+        "order": 1,
+        "required": true,
+        "depends_on": [
+          "pricing_strategy"
+        ],
+        "artifact_kinds": [
+          "financial_projections"
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "pricing_strategy",
+      "status": "succeeded",
+      "attempt": 1,
+      "started_at": "2026-11-28T00:00:00Z",
+      "completed_at": "2026-11-28T00:00:00Z",
+      "error": null
+    },
+    {
+      "step_id": "financial_projections",
+      "status": "succeeded",
+      "attempt": 2,
+      "started_at": "2026-11-28T00:00:00Z",
+      "completed_at": "2026-11-28T00:00:00Z",
+      "error": null
+    }
+  ]
+}

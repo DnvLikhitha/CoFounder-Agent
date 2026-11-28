@@ -168,6 +168,25 @@ class LiveAgentTests(unittest.TestCase):
             self.assertNotIn("Month 8", prompt)
             self.assertNotIn("$50K", prompt)
 
+    def test_reviewed_live_financial_prompt_includes_approved_annual_price(self):
+        step_id = "financial_projections"
+        fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        upstream = {name: fixture[name] for name in LIVE_STEPS[step_id].required}
+        pricing = upstream["pricing_strategy"]
+        tier = pricing["tiers"][0]
+        tier.update(price_monthly_usd=37, price_annual_usd=369.50)
+        pricing["founder_price_revision"] = {"tier_name": tier["tier_name"]}
+        body = {"problem": "Find internships for university students."}
+        llm = SimpleNamespace(complete=AsyncMock(return_value=json.dumps(fixture[step_id])))
+        with patch.object(LIVE_STEPS[step_id].agent, "fetch_research", new=AsyncMock(return_value="")):
+            asyncio.run(live_agents.run_reviewed_agent(step_id, body, upstream, llm))
+            reviewed = llm.complete.await_args.args[0]
+            asyncio.run(live_agents.run_agent(step_id, body, upstream, llm))
+            historical = llm.complete.await_args.args[0]
+        self.assertIn('"price_annual_usd": 369.5', reviewed)
+        self.assertIn('"price_monthly_usd": 37', reviewed)
+        self.assertNotIn('"price_annual_usd": 369.5', historical)
+
     def test_settings_require_explicit_mode_and_groq_credentials(self):
         for mode, key, environment, error in [
             ("", "", "production", "V1_PROVIDER_MODE"),

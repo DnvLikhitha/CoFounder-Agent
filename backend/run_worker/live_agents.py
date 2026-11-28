@@ -9,10 +9,13 @@ from backend.llm.client import LLMClient
 from backend.llm.profiles import PROFILE_VERSION, PROMPT_VERSION, STARTUP_PROMPTS_V1, SYSTEM_PROMPT
 from backend.run_worker.ledger import AttemptLedger
 from backend.run_worker.prompt_fingerprint import startup_v1_fingerprint
+from backend.run_worker.prompts_reviewed_v1 import run_agent as run_reviewed_agent
 from backend.run_worker.prompts_v1 import run_agent
 
 
 PROMPT_FINGERPRINT = "f1302b85226ffdb0840ed8f2f7eae514e32383e131756e9aae2946fdfd6ff7f9"
+REVIEWED_PROMPT_VERSION = "startup-reviewed-prompts-v1"
+REVIEWED_PROMPT_FINGERPRINT = "8f521e399c96ff32896569dc7b2613b75cfcc7752d384ff4bb52badf38575179"
 AgentRenderer = Callable[..., Awaitable[object]]
 
 
@@ -27,6 +30,8 @@ class PromptBundle:
 # Register future renderers alongside v1 before switching the submission default.
 PROMPT_BUNDLES = MappingProxyType({
     STARTUP_PROMPTS_V1: PromptBundle(SYSTEM_PROMPT, run_agent, startup_v1_fingerprint, PROMPT_FINGERPRINT),
+    REVIEWED_PROMPT_VERSION: PromptBundle(SYSTEM_PROMPT, run_reviewed_agent,
+                                         startup_v1_fingerprint, REVIEWED_PROMPT_FINGERPRINT),
 })
 
 

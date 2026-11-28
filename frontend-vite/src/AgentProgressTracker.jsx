@@ -58,7 +58,9 @@ export function AgentProgressTracker({ steps, runStatus, artifacts, onViewArtifa
                   {step.error && <p>{step.error.message}</p>}
                   {outputs.map((item) => (
                     <button className="artifact-link" type="button" key={item.artifact_id}
-                      onClick={() => onViewArtifact(item.artifact_id)}>{item.title}</button>
+                      onClick={() => onViewArtifact(item.artifact_id)}>
+                      {item.title}{item.revision && ` · Revision ${item.revision}`}
+                    </button>
                   ))}
                 </li>
               )

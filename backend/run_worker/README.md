@@ -1,6 +1,6 @@
 # PostgreSQL run worker
 
-New live and fake runs use the 16-agent `startup-langgraph-v1` manifest. Live mode uses Groq and fake mode supplies deterministic fixtures. PostgreSQL stores the authoritative snapshot, artifacts, events, and claim. The separate worker advances the graph and saves PostgreSQL checkpoints. See the [LangGraph architecture](../../docs/langgraph-orchestration.md) for the full dependency graph and recovery behavior.
+New live and fake runs use the 16-agent `startup-reviewed-v1` manifest. Live mode uses Groq and fake mode supplies deterministic fixtures. PostgreSQL stores the authoritative snapshot, artifacts, events, and claim. The separate worker advances the graph and saves PostgreSQL checkpoints. Earlier LangGraph runs keep their existing topology and checkpoint format. See the [LangGraph architecture](../../docs/langgraph-orchestration.md) for the dependency graph and recovery behavior.
 
 ## Production configuration
 
@@ -10,7 +10,17 @@ Every run operation is scoped to the verified owner. Production storage keys inc
 
 Set `CORS_ORIGINS` to exact comma-separated HTTPS origins, or to an empty string for same-origin clients. Browser requests use bearer headers for REST, downloads, and fetch-based SSE. Use ingress logs that exclude query strings, headers, and bodies, and disable SSE buffering. `/health` checks liveness. `/ready` checks configuration, the migrated database schema, a worker heartbeat for the configured mode within 45 seconds, and usable JWKS in production. It makes no paid model requests.
 
-The REST and SSE contracts are in [shared/contracts](../../shared/contracts/README.md). Set `V1_REQUIRE_FOUNDER_REVIEW=true` to pause new successful live runs for approval of the immutable executive summary after all agents settle. The review and decision survive restarts. Approval lets the worker finalize the existing outputs. Rejection preserves them in a partial run. Quality evaluations continue to use `not_evaluated`.
+The REST and SSE contracts describe the available decisions, revision history, and replay. [Shared run contract](../../shared/contracts/README.md)
+
+## Evaluation and founder review
+
+New runs record deterministic evaluations by default. All agents pass their output schema and applicable domain invariants before publication. The evaluator checks task completion, relevance, consistency, grounding, and completeness. Grounding links available SerpAPI and FRED sources and committed research revisions. It distinguishes a reported citation, a matching upstream value, and general research context. These checks flag weaknesses for review and do not independently verify research claims.
+
+Set `V1_LLM_EVALUATION=true` to add a separate LLM judgment to new live runs. The judge uses the pinned Groq profile and the same durable token and cost limits as generation. Usage records distinguish `evaluation` from `generation` and identify the execution revision. Reserve budget for generation when enabling judging. A malformed judge response, timeout, or exhausted budget leaves the heuristic result and valid output available. Founder-edited artifacts receive deterministic evaluation.
+
+Set `V1_REQUIRE_PRICING_REVIEW=true` to enable the checkpoint for new live or fake runs. The worker checkpoints and releases its claim after producing draft pricing and financial projections, before starting the pitch deck or executive summary. An owner can approve the displayed pricing revision, reject it, or submit changed monthly and annual USD prices for one existing tier. A change creates an immutable revision and a fresh approval request. Approval of the change queues financial recomputation, and the pitch deck and executive summary then use the approved pricing and recomputed forecast. Unaffected agents keep their results. Rejection preserves the draft history, blocks dependent investor outputs, and omits the rejected outputs from exports. Recovery uses the native interrupt and its persisted decision after any worker restart.
+
+Both flags default to false and are pinned at submission. `V1_REQUIRE_FOUNDER_REVIEW=true` independently pauses new successful live runs for final approval of the executive summary. New runs pin `startup-reviewed-prompts-v1`, which supplies both approved monthly and annual prices to downstream agents. Apply the repeatable database migration before starting the updated API and workers. Release the Vite client with the updated API because both use strict contract validation. Earlier submitted runs retain their original behavior.
 
 ## Persistence and recovery
 
@@ -54,6 +64,8 @@ V1_JWT_SECRET=<random-secret-at-least-32-characters>
 V1_JWT_ISSUER=cofounder-agent
 V1_JWT_AUDIENCE=cofounder-api
 V1_PROVIDER_MODE=live
+V1_REQUIRE_PRICING_REVIEW=true
+V1_LLM_EVALUATION=false
 GROQ_API_KEY=<approved-groq-key>
 SERPAPI_API_KEY=<optional-search-key>
 FRED_API_KEY=<optional-macro-data-key>
@@ -108,6 +120,6 @@ $env:TEST_DATABASE_URL = 'postgresql://<test-user>:<test-password>@localhost:543
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-The 16-agent integration uses the LangGraph scheduler and PostgreSQL checkpointer, subprocess boundary, agent prompts and parsers, and the Groq adapter with deterministic transport doubles. It checks committed dependency reads, parallel scheduling, evidence, replay, recovery, owner isolation, partial failures, and report content. Provider-free verification does not measure live output quality, cost, or latency. Use approved credentials and a bounded workload before attempting live verification.
+The 16-agent integration uses the LangGraph scheduler and PostgreSQL checkpointer, subprocess boundary, agent prompts and parsers, and the Groq adapter with deterministic transport doubles. It checks committed dependencies, parallel scheduling, evidence, replay, recovery, owner isolation, partial failures, and report content. Evaluation fixtures check the rubric and evidence, while PostgreSQL tests cover judge accounting, domain failures, stale and duplicate decisions, worker restart, immutable revisions, and targeted recomputation. Provider-free verification does not measure live output quality, cost, or latency.
 
 GitHub Actions runs the backend suite with PostgreSQL and checks contract drift, frontend lint, Vite tests, and the live build. Staging verification requires the real Supabase issuer, two test users, an ingress, and approved Groq credentials and spend.

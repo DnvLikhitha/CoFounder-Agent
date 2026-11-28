@@ -71,6 +71,8 @@ The system consists of **16 specialized AI agents** organized into multiple laye
 
 New v1 runs use a 16-agent LangGraph workflow with PostgreSQL checkpoints. The separate worker still claims runs, maintains its lease, and publishes the existing v1 artifacts and events. Development fake mode and production Groq mode execute the same graph.
 
+New runs include deterministic evaluations and immutable artifact history. Enable `V1_REQUIRE_PRICING_REVIEW` to let founders approve, reject, or revise a pricing tier before investor outputs. `V1_LLM_EVALUATION` adds a separate, budgeted Groq judgment in live mode. [Evaluation and review configuration](backend/run_worker/README.md#evaluation-and-founder-review)
+
 See the [architecture and dependency diagram](docs/langgraph-orchestration.md) and the [worker runbook](backend/run_worker/README.md) for setup and operating instructions.
 
 ---

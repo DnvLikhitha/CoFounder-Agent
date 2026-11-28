@@ -44,7 +44,7 @@ function sourceReference(item) {
   return label ? { label, url } : null
 }
 
-function webUrl(value) {
+export function webUrl(value) {
   if (!text(value)) return null
   try {
     const url = new URL(value)

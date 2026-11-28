@@ -1,0 +1,25 @@
+{
+  "founder": {"problem": "Help students find dependable university internships.", "domain": null, "geography": null},
+  "checks": [
+    {
+      "step": "market_research",
+      "patch": {"tam_usd_billions": 10, "sam_usd_billions": 2, "som_usd_millions": 20},
+      "domain_error": false
+    },
+    {
+      "step": "market_research",
+      "patch": {"tam_usd_billions": 10, "sam_usd_billions": 2, "som_usd_millions": 3000},
+      "domain_error": true
+    },
+    {
+      "step": "financial_projections",
+      "patch": {"arr_month_12_usd": 1, "ltv_usd": 100, "cac_usd": 25, "ltv_cac_ratio": 20},
+      "consistency": "needs_review"
+    },
+    {
+      "step": "problem_refined",
+      "patch": {"problem_refined": "Optimize alpine snow preservation and mountaineering."},
+      "relevance": "needs_review"
+    }
+  ]
+}

@@ -41,6 +41,7 @@ export function createLiveClient(fetcher = globalThis.fetch, { accessToken, onUn
 
   return {
     supportsExports: true,
+    supportsPricingRevision: true,
     startRun(input, { signal, idempotencyKey } = {}) {
       return post(runsPath, input, signal, idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined)
     },
@@ -55,11 +56,12 @@ export function createLiveClient(fetcher = globalThis.fetch, { accessToken, onUn
     getArtifact(runId, artifactId, { signal } = {}) {
       return json(`${runPath(runId)}/artifacts/${encodeURIComponent(artifactId)}`, { signal })
     },
-    async decideReview(runId, reviewId, decision, { signal } = {}) {
-      if (decision.decision === 'revise') {
-        throw new ApiError('Revision requests are unavailable in v1.', { status: 422 })
+    async decideReview(runId, reviewId, decision, { signal, expectedArtifactIds } = {}) {
+      if (decision.decision === 'revise' && (!decision.pricing_revision || !expectedArtifactIds?.length)) {
+        throw new ApiError('Select a pricing tier and provide its revised prices.', { status: 422 })
       }
-      return post(`${runPath(runId)}/reviews/${encodeURIComponent(reviewId)}/decisions`, decision, signal)
+      const payload = expectedArtifactIds?.length ? { ...decision, artifact_ids: expectedArtifactIds } : decision
+      return post(`${runPath(runId)}/reviews/${encodeURIComponent(reviewId)}/decisions`, payload, signal)
     },
     async downloadExport(runId, format, { signal } = {}) {
       const response = await request(`${runPath(runId)}/exports/${encodeURIComponent(format)}`, { signal })

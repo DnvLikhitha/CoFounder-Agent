@@ -1,0 +1,94 @@
+[
+  {
+    "run_id": "d23ccf85-c9a2-47af-b808-d2200ad18b42",
+    "reference": {
+      "artifact_id": "pricing_strategy",
+      "step_id": "pricing_strategy",
+      "kind": "pricing_strategy",
+      "title": "Pricing Strategy",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-28T00:00:00Z",
+      "href": "/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/pricing_strategy",
+      "revision": 1,
+      "supersedes_artifact_id": null,
+      "input_artifact_ids": []
+    },
+    "content": {
+      "tiers": [
+        {
+          "tier_name": "Starter",
+          "price_monthly_usd": 30,
+          "price_annual_usd": 300
+        }
+      ]
+    }
+  },
+  {
+    "run_id": "d23ccf85-c9a2-47af-b808-d2200ad18b42",
+    "reference": {
+      "artifact_id": "financial_projections",
+      "step_id": "financial_projections",
+      "kind": "financial_projections",
+      "title": "Financial Projections",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-28T00:00:00Z",
+      "href": "/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/financial_projections",
+      "revision": 1,
+      "supersedes_artifact_id": null,
+      "input_artifact_ids": [
+        "pricing_strategy"
+      ]
+    },
+    "content": {
+      "arr_month_12_usd": 3600
+    }
+  },
+  {
+    "run_id": "d23ccf85-c9a2-47af-b808-d2200ad18b42",
+    "reference": {
+      "artifact_id": "pricing_strategy-r2",
+      "step_id": "pricing_strategy",
+      "kind": "pricing_strategy",
+      "title": "Pricing Strategy",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-28T00:00:00Z",
+      "href": "/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/pricing_strategy-r2",
+      "revision": 2,
+      "supersedes_artifact_id": "pricing_strategy",
+      "input_artifact_ids": []
+    },
+    "content": {
+      "tiers": [
+        {
+          "tier_name": "Starter",
+          "price_monthly_usd": 50,
+          "price_annual_usd": 500
+        }
+      ]
+    }
+  },
+  {
+    "run_id": "d23ccf85-c9a2-47af-b808-d2200ad18b42",
+    "reference": {
+      "artifact_id": "financial_projections-r2",
+      "step_id": "financial_projections",
+      "kind": "financial_projections",
+      "title": "Financial Projections",
+      "media_type": "application/json",
+      "quality": "complete",
+      "created_at": "2026-11-28T00:00:00Z",
+      "href": "/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/financial_projections-r2",
+      "revision": 2,
+      "supersedes_artifact_id": "financial_projections",
+      "input_artifact_ids": [
+        "pricing_strategy-r2"
+      ]
+    },
+    "content": {
+      "arr_month_12_usd": 6000
+    }
+  }
+]
