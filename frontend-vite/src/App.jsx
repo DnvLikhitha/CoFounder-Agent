@@ -20,7 +20,12 @@ const auth = config && (await import('@supabase/supabase-js')).createClient(conf
 export default function App() {
   return (
     <BrowserRouter>
-      <a className="skip-link" href="#main">Skip to content</a>
+      <a className="skip-link" href="#main" onClick={(event) => {
+        const content = document.getElementById('main')
+        if (!content) return
+        event.preventDefault()
+        content.focus()
+      }}>Skip to content</a>
       {mockMode ? <Workspace client={mockClient} /> : auth ? <LiveWorkspace /> : (
         <>
           <SiteHeader />
