@@ -5,6 +5,7 @@ export function useArtifact(client, runId, reference) {
   const [result, setResult] = useState(null)
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
+    if (!reference) return
     const request = new AbortController()
     async function load() {
       try {

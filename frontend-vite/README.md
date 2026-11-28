@@ -55,7 +55,7 @@ See the [React cutover readiness report](RELEASE_READINESS.md) for the tested ca
 
 - The dashboard uses manifest display order, step states, dependency IDs, and artifact references from v1. Output widgets recognize the artifact kinds used by the legacy agents and show generic structured data for new kinds. Missing values and unproduced artifacts remain visible as such.
 - Starting a run sends an `Idempotency-Key`. Retrying unchanged input in the open form reuses the key. Editing the input, completing the submission, or choosing **Start a new submission** starts a new intent. The key is held in the open form.
-- Live history follows the worker's owner-scoped v1 cursor. When the backend enables founder review, a successful live run pauses for approval of its executive summary. The v1 review route accepts `approve` or `reject`, with optional feedback. The frontend sends the decision and waits for SSE to update the run. An HTTP 409 refreshes the snapshot.
+- Live history follows the worker's owner-scoped v1 cursor. Enable `V1_REQUIRE_PRICING_REVIEW` to review draft pricing before investor outputs. The UI sends the selected artifact revision with each decision, supports editing one tier, and waits for the event carrying the replacement review. An HTTP 409 refreshes the snapshot. A separately enabled executive-summary review supports approval or rejection.
 - In live mode, each loaded artifact can be downloaded in its original media type. The UI also downloads server-generated Markdown, PDF, and PowerPoint for succeeded and partial runs.
 - REST and fetch-based SSE use bearer headers. After a stream closes, the client obtains a fresh snapshot and opens the stream at its cursor using the current session. Forbidden, rate-limited, and unavailable responses produce distinct messages and preserve the session.
 
@@ -66,6 +66,5 @@ Provide an existing successful live-provider run owned by a synthetic test accou
 ### Shared contract follow-ups
 
 - Verify downloads, SSE reconnect, and account isolation through the staging ingress with the migrated worker and production identity provider.
-- Artifact detail validates the v1 payload and uses the immutable `artifact_id` to show the exact revision. Evidence and assumptions in the generic JSON body are optional conventions. Agree on typed source references, assumption identifiers, and revision metadata before relying on them across producers.
-- The UI shows each evaluation record's own outcome, score and reasons. Agree on dimension IDs, labels and missing-score semantics for evaluations that report several dimensions in one record.
-- Agree on a checkpoint/revision precondition, an explicit revise action, and the resulting receipt and SSE transitions. The mock preview checks the checkpoint and artifact IDs without changing v1 events. It records a revision request and leaves that checkpoint pending. The current API cannot submit an explicit revision precondition or process a revision request.
+- Review the pricing edit, second approval, forecast replacement, and contract changes together before release. The shared `revised` fixture exercises both reviews, history, and reconnect at every event cursor.
+- Artifact detail uses the immutable `artifact_id` for historical revisions and labels superseded inputs. Evaluation records show their method, scored dimensions, and linked evidence when available. Roll out the updated frontend with the updated API schemas.

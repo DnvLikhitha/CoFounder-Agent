@@ -102,6 +102,52 @@
           "pattern": "^/api/v1/runs/[^/]+/artifacts/[^/]+$",
           "title": "Href",
           "type": "string"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "supersedes_artifact_id": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supersedes Artifact Id"
+        },
+        "input_artifact_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[a-zA-Z0-9_-]+$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Artifact Ids"
         }
       },
       "required": [
@@ -115,6 +161,43 @@
         "href"
       ],
       "title": "ArtifactReference",
+      "type": "object"
+    },
+    "DimensionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "enum": [
+            "task_completion",
+            "relevance",
+            "consistency",
+            "grounding",
+            "completeness"
+          ],
+          "title": "Dimension",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "passed",
+            "failed",
+            "needs_review",
+            "not_applicable"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dimension",
+        "outcome",
+        "reason"
+      ],
+      "title": "DimensionResult",
       "type": "object"
     },
     "ErrorDetail": {
@@ -271,6 +354,52 @@
           "format": "date-time",
           "title": "Created At",
           "type": "string"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "enum": [
+                "heuristic",
+                "llm"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "dimensions": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/DimensionResult"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dimensions"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EvidenceReference"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence"
         }
       },
       "required": [
@@ -285,6 +414,79 @@
         "created_at"
       ],
       "title": "EvaluationResult",
+      "type": "object"
+    },
+    "EvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_path": {
+          "pattern": "^/",
+          "title": "Claim Path",
+          "type": "string"
+        },
+        "artifact_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Url"
+        },
+        "relationship": {
+          "enum": [
+            "citation",
+            "matched_value",
+            "research_context"
+          ],
+          "title": "Relationship",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_path",
+        "artifact_id",
+        "relationship"
+      ],
+      "title": "EvidenceReference",
+      "type": "object"
+    },
+    "PricingRevision": {
+      "additionalProperties": false,
+      "properties": {
+        "tier_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Tier Name",
+          "type": "string"
+        },
+        "price_monthly_usd": {
+          "minimum": 0.0,
+          "title": "Price Monthly Usd",
+          "type": "number"
+        },
+        "price_annual_usd": {
+          "minimum": 0.0,
+          "title": "Price Annual Usd",
+          "type": "number"
+        }
+      },
+      "required": [
+        "tier_name",
+        "price_monthly_usd",
+        "price_annual_usd"
+      ],
+      "title": "PricingRevision",
       "type": "object"
     },
     "ReviewDecided": {
@@ -348,7 +550,8 @@
         "decision": {
           "enum": [
             "approve",
-            "reject"
+            "reject",
+            "revise"
           ],
           "title": "Decision",
           "type": "string"
@@ -365,6 +568,37 @@
           ],
           "default": null,
           "title": "Comment"
+        },
+        "artifact_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[a-zA-Z0-9_-]+$",
+                "type": "string"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Ids"
+        },
+        "pricing_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PricingRevision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -456,6 +690,22 @@
           "format": "date-time",
           "title": "Created At",
           "type": "string"
+        },
+        "revision_kind": {
+          "anyOf": [
+            {
+              "const": "pricing",
+              "enum": [
+                "pricing"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision Kind"
         }
       },
       "required": [

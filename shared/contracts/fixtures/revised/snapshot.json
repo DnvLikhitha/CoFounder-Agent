@@ -1,0 +1,65 @@
+{
+  "contract_version": "1.0",
+  "run_id": "d23ccf85-c9a2-47af-b808-d2200ad18b42",
+  "input": {
+    "problem": "Set pricing for a campus internship platform.",
+    "domain": null,
+    "geography": null
+  },
+  "created_at": "2026-11-28T00:00:00Z",
+  "last_event_id": 0,
+  "artifacts": [],
+  "evaluations": [],
+  "pending_review": null,
+  "status": "queued",
+  "updated_at": "2026-11-28T00:00:00Z",
+  "completed_at": null,
+  "error": null,
+  "manifest": {
+    "version": "pricing-review-contract-fixture",
+    "steps": [
+      {
+        "step_id": "pricing_strategy",
+        "label": "Pricing Strategy",
+        "phase": "Business",
+        "order": 0,
+        "required": true,
+        "depends_on": [],
+        "artifact_kinds": [
+          "pricing_strategy"
+        ]
+      },
+      {
+        "step_id": "financial_projections",
+        "label": "Financial Projections",
+        "phase": "Business",
+        "order": 1,
+        "required": true,
+        "depends_on": [
+          "pricing_strategy"
+        ],
+        "artifact_kinds": [
+          "financial_projections"
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "pricing_strategy",
+      "status": "queued",
+      "attempt": 0,
+      "started_at": null,
+      "completed_at": null,
+      "error": null
+    },
+    {
+      "step_id": "financial_projections",
+      "status": "queued",
+      "attempt": 0,
+      "started_at": null,
+      "completed_at": null,
+      "error": null
+    }
+  ]
+}

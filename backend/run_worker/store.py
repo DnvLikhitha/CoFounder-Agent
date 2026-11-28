@@ -2,6 +2,7 @@
 from base64 import b64decode, urlsafe_b64encode
 from contextlib import contextmanager
 from datetime import datetime
+from copy import deepcopy
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -12,9 +13,13 @@ from psycopg.types.json import Jsonb
 from backend.contracts.v1 import Artifact, EVENT_ADAPTER, ReviewReceipt, RunSnapshot, RunSummary
 from backend.llm.profiles import PROFILE_VERSION, PROMPT_VERSION
 from backend.run_worker import workflow
+from backend.run_worker.evaluator import domain_errors, failed_evaluation, heuristic
+from backend.run_worker.live_agents import REVIEWED_PROMPT_VERSION
 
 TERMINAL = {"succeeded", "partial", "failed"}
 STEP_TERMINAL = TERMINAL | {"skipped"}
+PRICING = "pricing_strategy"
+FINANCIALS = "financial_projections"
 
 
 class StoreError(Exception):
@@ -29,6 +34,10 @@ class LostClaim(Exception):
 
 def now(connection):
     return connection.execute("SELECT clock_timestamp() AS now").fetchone()["now"].isoformat()
+
+
+def latest_artifacts(snapshot):
+    return {ref["step_id"]: ref for ref in snapshot["artifacts"]}
 
 
 def decode_history_cursor(cursor):
@@ -61,7 +70,7 @@ class Store:
         migrate_checkpoints(self)
 
     def submit(self, owner, key, body, *, version=None, token_limit=500_000, cost_limit=250_000_000,
-               require_review=False, graph_mode=None):
+               require_review=False, graph_mode=None, pricing_review=False, llm_evaluation=False):
         with self.connect() as connection:
             timestamp, run_id = now(connection), str(uuid4())
             manifest = workflow.current_manifest(version)
@@ -74,17 +83,20 @@ class Store:
                                    for step in manifest.steps],
                             artifacts=[], evaluations=[], pending_review=None)
             RunSnapshot.model_validate(snapshot)
-            if (manifest.version == workflow.GRAPH_VERSION) != (graph_mode in {"live", "fake"}):
+            if (manifest.version in workflow.GRAPH_VERSIONS) != (graph_mode in {"live", "fake"}):
                 raise ValueError("A LangGraph run requires an explicit provider mode")
             live = manifest.version == workflow.LIVE_VERSION or graph_mode == "live"
+            prompt_version = REVIEWED_PROMPT_VERSION if manifest.version == workflow.REVIEWED_VERSION else PROMPT_VERSION
             inserted = connection.execute(
                 """INSERT INTO v1_runs (run_id, owner_id, submission_key, input,
                    initial_snapshot, snapshot, created_at, model_profile, prompt_version, token_limit,
-                   cost_limit_nanousd, require_review, graph_mode) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   cost_limit_nanousd, require_review, graph_mode, pricing_review, llm_evaluation)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (owner_id, submission_key) DO NOTHING RETURNING run_id""",
                 (run_id, owner, key, Jsonb(body), Jsonb(snapshot), Jsonb(snapshot), timestamp,
-                 PROFILE_VERSION if live else None, PROMPT_VERSION if live or graph_mode else None,
-                 token_limit if live else None, cost_limit if live else None, require_review, graph_mode)).fetchone()
+                 PROFILE_VERSION if live else None, prompt_version if live or graph_mode else None,
+                 token_limit if live else None, cost_limit if live else None, require_review, graph_mode,
+                 pricing_review, llm_evaluation and live)).fetchone()
             if inserted:
                 return snapshot
             row = connection.execute(
@@ -98,7 +110,7 @@ class Store:
         with self.connect() as connection:
             connection.execute(
                 """INSERT INTO v1_worker_heartbeats (mode, seen_at) VALUES (%s,clock_timestamp())
-                   ON CONFLICT (mode) DO UPDATE SET seen_at=clock_timestamp()""", (f"{mode}:{workflow.GRAPH_VERSION}",))
+                   ON CONFLICT (mode) DO UPDATE SET seen_at=clock_timestamp()""", (f"{mode}:{workflow.REVIEWED_VERSION}",))
 
     def ready(self, mode):
         from backend.run_worker.checkpoints import checkpoint_schema_ready
@@ -108,7 +120,8 @@ class Store:
             # Resolve the runtime relations and migrated columns using the configured database role.
             connection.execute("""
                 SELECT r.token_limit, r.cost_limit_nanousd, r.prompt_version, r.model_profile, r.require_review,
-                       r.graph_mode, r.graph_interrupt_id, r.graph_resume_id, a.body, e.body, l.charged_tokens, l.retry_at, d.receipt
+                       r.graph_mode, r.graph_interrupt_id, r.graph_resume_id, r.graph_resume_payload, r.pricing_review,
+                       r.llm_evaluation, a.body, e.body, l.charged_tokens, l.retry_at, l.purpose, l.execution_revision, d.receipt
                 FROM v1_runs r LEFT JOIN v1_artifacts a USING (run_id) LEFT JOIN v1_events e USING (run_id)
                 LEFT JOIN v1_llm_attempts l USING (run_id) LEFT JOIN v1_review_decisions d USING (run_id)
                 LIMIT 0""")
@@ -116,7 +129,7 @@ class Store:
                 return False
             return connection.execute(
                 """SELECT 1 FROM v1_worker_heartbeats WHERE mode=%s
-                   AND seen_at > clock_timestamp() - interval '45 seconds'""", (f"{mode}:{workflow.GRAPH_VERSION}",)
+                   AND seen_at > clock_timestamp() - interval '45 seconds'""", (f"{mode}:{workflow.REVIEWED_VERSION}",)
             ).fetchone() is not None
 
     def snapshot(self, owner, run_id):
@@ -269,23 +282,41 @@ class Store:
 
     def graph_configuration(self, run_id, token):
         with self._claimed(run_id, token) as (connection, snapshot):
-            row = connection.execute("""SELECT graph_mode, model_profile, prompt_version, graph_resume_id
+            row = connection.execute("""SELECT graph_mode, model_profile, prompt_version, graph_resume_id,
+                                              graph_resume_payload, pricing_review, llm_evaluation
                                        FROM v1_runs WHERE run_id=%s""", (run_id,)).fetchone()
             return {**row, "input": snapshot["input"], "manifest": snapshot["manifest"]}
 
-    def park_graph(self, run_id, token, interrupt_id):
-        with self._claimed(run_id, token, release=True) as (connection, _):
-            connection.execute("""UPDATE v1_runs SET graph_interrupt_id=%s, graph_resume_id=NULL
+    def park_graph(self, run_id, token, interrupt_id, *, public=False):
+        with self._claimed(run_id, token, release=True) as (connection, snapshot):
+            connection.execute("""UPDATE v1_runs SET graph_interrupt_id=%s, graph_resume_id=NULL, graph_resume_payload=NULL
                                   WHERE run_id=%s""", (interrupt_id, run_id))
+            if public:
+                timestamp = now(connection)
+                artifact = latest_artifacts(snapshot)[PRICING]
+                step = next(s for s in snapshot["steps"] if s["step_id"] == PRICING)
+                step.update(status="awaiting_review", completed_at=None)
+                self._emit(connection, snapshot, "step.updated", step, timestamp)
+                self._request_pricing_review(connection, snapshot, artifact["artifact_id"], timestamp)
+                self._run_status(connection, snapshot, "awaiting_review", timestamp)
+
+    def _request_pricing_review(self, connection, snapshot, artifact_id, timestamp):
+        pending = dict(review_id=str(uuid4()), step_id=PRICING, artifact_ids=[artifact_id], revision_kind="pricing",
+                       prompt="Approve the pricing assumptions, reject them, or propose revised tier prices.",
+                       created_at=timestamp)
+        snapshot["pending_review"] = pending
+        self._emit(connection, snapshot, "review.requested", pending, timestamp)
 
     def authorize_graph_resume(self, owner, run_id, interrupt_id):
         """Private approval entry point. Prompt 14 will call this from its review transaction."""
         with self.connect() as connection:
-            row = connection.execute("""SELECT graph_interrupt_id, graph_resume_id, snapshot->>'status' AS status
+            row = connection.execute("""SELECT graph_interrupt_id, graph_resume_id, pricing_review, snapshot->>'status' AS status
                                        FROM v1_runs WHERE run_id=%s AND owner_id=%s FOR UPDATE""",
                                      (run_id, owner)).fetchone()
             if row is None:
                 raise StoreError(404, "not_found", "Run not found")
+            if row["pricing_review"]:
+                raise StoreError(409, "state_conflict", "This run requires a persisted review decision")
             if row["graph_resume_id"] == interrupt_id and interrupt_id:
                 return
             if not interrupt_id or row["graph_interrupt_id"] != interrupt_id or row["status"] != "running":
@@ -299,23 +330,27 @@ class Store:
             step = states[step_id]
             if step["status"] not in STEP_TERMINAL:
                 raise StoreError(409, "state_conflict", "Graph step outcome is not committed")
+            ref = latest_artifacts(snapshot).get(step_id)
             artifact = connection.execute("""SELECT body->'reference' AS reference,
                        (body->'content') ? 'tool_evidence' AS research,
                        (body->'content') ? 'assumptions' AS assumptions
                        FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s""",
-                                          (run_id, step_id)).fetchone()
+                                          (run_id, ref["artifact_id"])).fetchone() if ref and step["status"] in {"succeeded", "partial"} else None
             if (step["status"] in {"succeeded", "partial"}) != bool(artifact):
                 raise StoreError(409, "state_conflict", "Graph step artifact is inconsistent")
-            return {
+            outcome = {
                 "status": step["status"], "error": step["error"], "artifact": artifact["reference"] if artifact else None,
                 "required": {key: states[key]["status"] for key in spec.required},
                 "optional": {key: states[key]["status"] for key in spec.optional},
-                "research_artifact_id": step_id if artifact and artifact["research"] else None,
-                "assumptions_artifact_id": step_id if artifact and artifact["assumptions"] else None,
+                "research_artifact_id": ref["artifact_id"] if artifact and artifact["research"] else None,
+                "assumptions_artifact_id": ref["artifact_id"] if artifact and artifact["assumptions"] else None,
             }
+            if snapshot["manifest"]["version"] == workflow.REVIEWED_VERSION:
+                outcome["attempt"] = step["attempt"]
+            return outcome
 
     def is_demo(self, owner, run_id, version):
-        if version != workflow.GRAPH_VERSION:
+        if version not in workflow.GRAPH_VERSIONS:
             return version in workflow.FAKE_VERSIONS
         with self.connect() as connection:
             row = connection.execute("SELECT graph_mode FROM v1_runs WHERE run_id=%s AND owner_id=%s",
@@ -339,11 +374,15 @@ class Store:
                 self._emit(connection, snapshot, "step.updated", step, timestamp)
                 return None
             upstream = {}
+            refs = latest_artifacts(snapshot)
             optional = workflow.WORKFLOWS[snapshot["manifest"]["version"]][step_id].optional
             available_optional = [name for name in optional if states.get(name) == "succeeded" and name not in required]
             for dependency in (*required, *available_optional):
+                ref = refs.get(dependency)
+                artifact_id = ref["artifact_id"] if ref else (
+                    dependency if snapshot["manifest"]["version"] != workflow.REVIEWED_VERSION else None)
                 artifact = connection.execute("SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
-                                              (run_id, dependency)).fetchone()
+                                              (run_id, artifact_id)).fetchone() if artifact_id else None
                 if artifact is None and dependency in available_optional:
                     continue
                 if states[dependency] != "succeeded" or artifact is None:
@@ -355,43 +394,86 @@ class Store:
             self._emit(connection, snapshot, "step.updated", step, timestamp)
             return snapshot["input"], upstream
 
-    def complete_step(self, run_id, token, step_id, content, *, partial=False):
+    def _record_evaluation(self, connection, snapshot, step_id, artifact_id, evaluation, timestamp):
+        method = evaluation["method"]
+        step = next(item for item in snapshot["steps"] if item["step_id"] == step_id)
+        target = artifact_id or f'{step_id}-attempt-{step["attempt"]}'
+        evaluation_id = f"{target}-{method}-evaluation"
+        entry = dict(evaluation_id=evaluation_id, step_id=step_id, artifact_id=artifact_id,
+                     evaluator="deterministic-checks" if method == "heuristic" else "groq-judge",
+                     evaluator_version="1", created_at=timestamp, **evaluation)
+        snapshot["evaluations"].append(entry)
+        self._emit(connection, snapshot, "evaluation.completed", entry, timestamp)
+
+    def _write_artifact(self, connection, snapshot, step_id, content, timestamp, *, partial=False):
+        run_id = snapshot["run_id"]
+        reviewed = snapshot["manifest"]["version"] == workflow.REVIEWED_VERSION
+        history = [ref for ref in snapshot["artifacts"] if ref["step_id"] == step_id]
+        revision = len(history) + 1
+        artifact_id = step_id if revision == 1 else f"{step_id}-r{revision}"
+        reference = dict(artifact_id=artifact_id, step_id=step_id, kind=step_id,
+                         title=step_id.replace("_", " ").title(), media_type="application/json",
+                         quality="partial" if partial else "complete", created_at=timestamp,
+                         href=f"/api/v1/runs/{run_id}/artifacts/{artifact_id}")
+        upstream = {}
+        if reviewed:
+            spec = workflow.LIVE_STEPS[step_id]
+            refs = latest_artifacts(snapshot)
+            successful = {step["step_id"] for step in snapshot["steps"] if step["status"] == "succeeded"}
+            for dependency in spec.required + spec.optional:
+                if dependency in successful and dependency in refs:
+                    upstream[dependency] = connection.execute(
+                        "SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
+                        (run_id, refs[dependency]["artifact_id"])).fetchone()["body"]
+            if domain_errors(step_id, content, {name: row["content"] for name, row in upstream.items()}):
+                raise workflow.InvalidOutput(step_id)
+            reference.update(revision=revision, supersedes_artifact_id=history[-1]["artifact_id"] if history else None,
+                             input_artifact_ids=[row["reference"]["artifact_id"] for row in upstream.values()])
+        artifact = dict(run_id=run_id, reference=reference, content=content)
+        Artifact.model_validate(artifact)
+        connection.execute("INSERT INTO v1_artifacts VALUES (%s,%s,%s)", (run_id, artifact_id, Jsonb(artifact)))
+        snapshot["artifacts"].append(reference)
+        self._emit(connection, snapshot, "artifact.created", reference, timestamp)
+        return artifact, upstream
+
+    def complete_step(self, run_id, token, step_id, content, *, partial=False, judged=None):
         with self._claimed(run_id, token) as (connection, snapshot):
-            quality = "partial" if partial else "complete"
-            previous = connection.execute("SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
-                                          (run_id, step_id)).fetchone()
-            if previous:
-                if previous["body"]["content"] != content or previous["body"]["reference"]["quality"] != quality:
-                    raise StoreError(409, "state_conflict", "Artifact is immutable")
-                return previous["body"]
             step = next(s for s in snapshot["steps"] if s["step_id"] == step_id)
+            prior_ref = latest_artifacts(snapshot).get(step_id)
+            version = snapshot["manifest"]["version"]
+            if prior_ref and (version != workflow.REVIEWED_VERSION or step["status"] != "running"):
+                previous = connection.execute("SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
+                                              (run_id, prior_ref["artifact_id"])).fetchone()["body"]
+                if previous["content"] != content or prior_ref["quality"] != ("partial" if partial else "complete"):
+                    raise StoreError(409, "state_conflict", "Artifact is immutable")
+                return previous
             if step["status"] != "running":
                 raise StoreError(409, "state_conflict", "Step has not started")
-            workflow.validate_output(snapshot["manifest"]["version"], step_id, content)
+            workflow.validate_output(version, step_id, content)
             timestamp = now(connection)
-            reference = dict(artifact_id=step_id, step_id=step_id, kind=step_id,
-                             title=step_id.replace("_", " ").title(), media_type="application/json",
-                             quality=quality, created_at=timestamp,
-                             href=f"/api/v1/runs/{run_id}/artifacts/{step_id}")
-            artifact = dict(run_id=run_id, reference=reference, content=content)
-            Artifact.model_validate(artifact)
-            connection.execute("INSERT INTO v1_artifacts VALUES (%s,%s,%s)", (run_id, step_id, Jsonb(artifact)))
-            snapshot["artifacts"].append(reference)
-            self._emit(connection, snapshot, "artifact.created", reference, timestamp)
+            artifact, upstream = self._write_artifact(connection, snapshot, step_id, content, timestamp, partial=partial)
             error = dict(code="incomplete_output", message="Provider returned incomplete output",
                          retryable=False) if partial else None
             step.update(status="partial" if partial else "succeeded", completed_at=timestamp, error=error)
             self._emit(connection, snapshot, "step.updated", step, timestamp)
-            graph_mode = connection.execute("SELECT graph_mode FROM v1_runs WHERE run_id=%s",
-                                            (run_id,)).fetchone()["graph_mode"]
-            live = snapshot["manifest"]["version"] == workflow.LIVE_VERSION or graph_mode == "live"
-            evaluator = "worker" if live else "fake-provider"
-            reason = "No quality evaluator is configured." if evaluator == "worker" else "Fake workflow has no quality evaluator."
-            evaluation = dict(evaluation_id=f"{step_id}-evaluation", step_id=step_id, artifact_id=step_id,
-                              evaluator=evaluator, evaluator_version="1", outcome="not_evaluated",
-                              score=None, reasons=[reason], created_at=timestamp)
-            snapshot["evaluations"].append(evaluation)
-            self._emit(connection, snapshot, "evaluation.completed", evaluation, timestamp)
+            artifact_id = artifact["reference"]["artifact_id"]
+            if version == workflow.REVIEWED_VERSION:
+                self._record_evaluation(connection, snapshot, step_id, artifact_id,
+                                        heuristic(step_id, content, snapshot["input"], upstream, artifact_id,
+                                                  partial=partial), timestamp)
+                if judged is not None:
+                    self._close_reservations(connection, run_id, step_id)
+                    self._record_evaluation(connection, snapshot, step_id, artifact_id, judged, timestamp)
+            else:
+                graph_mode = connection.execute("SELECT graph_mode FROM v1_runs WHERE run_id=%s",
+                                                (run_id,)).fetchone()["graph_mode"]
+                live = version == workflow.LIVE_VERSION or graph_mode == "live"
+                evaluation = dict(evaluation_id=f"{step_id}-evaluation", step_id=step_id, artifact_id=step_id,
+                                  evaluator="worker" if live else "fake-provider", evaluator_version="1",
+                                  outcome="not_evaluated", score=None, reasons=["Historical workflow evaluation policy."],
+                                  created_at=timestamp)
+                snapshot["evaluations"].append(evaluation)
+                self._emit(connection, snapshot, "evaluation.completed", evaluation, timestamp)
             return artifact
 
     def finish(self, run_id, token):
@@ -408,11 +490,12 @@ class Store:
             review_step_id = "executive_summary"
             review = connection.execute(
                 """SELECT require_review AND NOT EXISTS
-                   (SELECT 1 FROM v1_review_decisions WHERE run_id=%s) AS pending
+                   (SELECT 1 FROM v1_review_decisions WHERE run_id=%s AND review_kind='final') AS pending
                    FROM v1_runs WHERE run_id=%s""", (run_id, run_id)).fetchone()
             review_step = next((s for s in snapshot["steps"] if s["step_id"] == review_step_id), None)
             if status == "succeeded" and review["pending"] and review_step:
-                pending = dict(review_id=str(uuid4()), step_id=review_step_id, artifact_ids=[review_step_id],
+                pending = dict(review_id=str(uuid4()), step_id=review_step_id,
+                               artifact_ids=[latest_artifacts(snapshot)[review_step_id]["artifact_id"]],
                                prompt="Approve this executive summary?", created_at=timestamp)
                 snapshot["pending_review"] = pending
                 self._emit(connection, snapshot, "review.requested", pending, timestamp)
@@ -423,9 +506,12 @@ class Store:
                 self._run_status(connection, snapshot, status, timestamp, error)
 
     def decide_review(self, owner, run_id, review_id, decision):
+        # Canonicalize omitted optional values while preserving legacy receipt equality.
+        decision = {"comment": None, **{key: value for key, value in decision.items() if value is not None}}
         with self.connect() as connection:
             owned = connection.execute(
-                "SELECT snapshot FROM v1_runs WHERE run_id=%s AND owner_id=%s FOR UPDATE", (run_id, owner)
+                "SELECT snapshot, graph_interrupt_id FROM v1_runs WHERE run_id=%s AND owner_id=%s FOR UPDATE",
+                (run_id, owner)
             ).fetchone()
             if owned is None:
                 raise StoreError(404, "not_found", "Run not found")
@@ -445,34 +531,95 @@ class Store:
                 raise StoreError(404, "not_found", "Review not found")
             if snapshot["status"] != "awaiting_review":
                 raise StoreError(409, "state_conflict", "Run is not awaiting review")
+            is_pricing = pending.get("revision_kind") == "pricing"
+            artifact_ids = decision.get("artifact_ids")
+            if (is_pricing or artifact_ids is not None) and artifact_ids != pending["artifact_ids"]:
+                raise StoreError(409, "state_conflict", "The reviewed artifact revision is stale")
+            if decision["decision"] == "revise" and not is_pricing:
+                raise StoreError(422, "validation_error", "This review does not accept a pricing revision")
             timestamp = now(connection)
             receipt = dict(run_id=str(run_id), review_id=review_id, decision=decision, decided_at=timestamp,
                            event_id=snapshot["last_event_id"] + 1)
             ReviewReceipt.model_validate(receipt)
             snapshot["pending_review"] = None
             self._emit(connection, snapshot, "review.decided", receipt, timestamp)
-            approved = decision["decision"] == "approve"
-            rejection = dict(code="review_rejected", message="Founder rejected the review", retryable=False)
-            for step in snapshot["steps"]:
-                if step["step_id"] == pending["step_id"]:
-                    step.update(status="succeeded" if approved else "failed", completed_at=timestamp,
-                                error=None if approved else rejection)
-                elif not approved and step["status"] == "queued":
-                    step.update(status="skipped", completed_at=timestamp, error=rejection)
-                else:
-                    continue
-                self._emit(connection, snapshot, "step.updated", step, timestamp)
-            status = "running" if approved else ("partial" if snapshot["artifacts"] else "failed")
-            self._run_status(connection, snapshot, status, timestamp, None if approved else rejection)
+            if is_pricing:
+                self._apply_pricing_decision(connection, snapshot, owned["graph_interrupt_id"], pending, decision, timestamp)
+            else:
+                self._apply_final_decision(connection, snapshot, pending, decision, timestamp)
             RunSnapshot.model_validate(snapshot)
             connection.execute(
-                "INSERT INTO v1_review_decisions VALUES (%s,%s,%s,%s)",
-                (run_id, review_id, decision["decision_id"], Jsonb(receipt)))
+                """INSERT INTO v1_review_decisions (run_id, review_id, decision_id, receipt, review_kind)
+                   VALUES (%s,%s,%s,%s,%s)""",
+                (run_id, review_id, decision["decision_id"], Jsonb(receipt), "pricing" if is_pricing else "final"))
             connection.execute("UPDATE v1_runs SET snapshot=%s, claim_token=NULL, lease_until=NULL WHERE run_id=%s",
                                (Jsonb(snapshot), run_id))
             return receipt
 
-    def fail(self, run_id, token, step_id, *, invalid_output=False, timed_out=False, budget_exceeded=False):
+    def _apply_final_decision(self, connection, snapshot, pending, decision, timestamp):
+        approved = decision["decision"] == "approve"
+        rejection = dict(code="review_rejected", message="Founder rejected the review", retryable=False)
+        for step in snapshot["steps"]:
+            if step["step_id"] == pending["step_id"]:
+                step.update(status="succeeded" if approved else "failed", completed_at=timestamp,
+                            error=None if approved else rejection)
+            elif not approved and step["status"] == "queued":
+                step.update(status="skipped", completed_at=timestamp, error=rejection)
+            else:
+                continue
+            self._emit(connection, snapshot, "step.updated", step, timestamp)
+        status = "running" if approved else ("partial" if snapshot["artifacts"] else "failed")
+        self._run_status(connection, snapshot, status, timestamp, None if approved else rejection)
+
+    def _apply_pricing_decision(self, connection, snapshot, interrupt_id, pending, decision, timestamp):
+        run_id = snapshot["run_id"]
+        refs = latest_artifacts(snapshot)
+        pricing = refs[PRICING]
+        if not interrupt_id or pending["artifact_ids"] != [pricing["artifact_id"]]:
+            raise StoreError(409, "state_conflict", "The review is no longer attached to the active pricing revision")
+        action = decision["decision"]
+        if action == "revise":
+            row = connection.execute("SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
+                                     (run_id, pricing["artifact_id"])).fetchone()
+            content = deepcopy(row["body"]["content"])
+            edit = decision["pricing_revision"]
+            tier = next((item for item in content["tiers"] if item["tier_name"] == edit["tier_name"]), None)
+            prices = {field: edit[field] for field in ("price_monthly_usd", "price_annual_usd")}
+            if tier is None or all(tier[field] == value for field, value in prices.items()):
+                raise StoreError(422, "validation_error", "Provide changed prices for an existing pricing tier")
+            tier.update(prices)
+            content["founder_price_revision"] = {**edit, "comment": decision["comment"]}
+            try:
+                workflow.validate_output(workflow.REVIEWED_VERSION, PRICING, content)
+            except workflow.InvalidOutput:
+                raise StoreError(422, "validation_error", "The pricing revision is invalid") from None
+            if domain_errors(PRICING, content):
+                raise StoreError(422, "validation_error", "The pricing revision violates pricing constraints")
+            artifact, upstream = self._write_artifact(connection, snapshot, PRICING, content, timestamp)
+            artifact_id = artifact["reference"]["artifact_id"]
+            self._record_evaluation(connection, snapshot, PRICING, artifact_id,
+                                    heuristic(PRICING, content, snapshot["input"], upstream, artifact_id), timestamp)
+            self._request_pricing_review(connection, snapshot, artifact_id, timestamp)
+            return
+
+        steps = {step["step_id"]: step for step in snapshot["steps"]}
+        approved = action == "approve"
+        rejection = dict(code="review_rejected", message="Founder rejected the pricing assumptions", retryable=False)
+        steps[PRICING].update(status="succeeded" if approved else "failed", completed_at=timestamp,
+                              error=None if approved else rejection)
+        self._emit(connection, snapshot, "step.updated", steps[PRICING], timestamp)
+        recompute = approved and pricing["revision"] > 1
+        if recompute or not approved:
+            steps[FINANCIALS].update(status="queued" if recompute else "skipped", started_at=None,
+                                     completed_at=None if recompute else timestamp, error=None if recompute else rejection)
+            self._emit(connection, snapshot, "step.updated", steps[FINANCIALS], timestamp)
+        resume = dict(decision=action, artifact_id=pricing["artifact_id"], recompute=recompute)
+        connection.execute("UPDATE v1_runs SET graph_resume_id=%s, graph_resume_payload=%s WHERE run_id=%s",
+                           (interrupt_id, Jsonb(resume), run_id))
+        self._run_status(connection, snapshot, "running", timestamp)
+
+    def fail(self, run_id, token, step_id, *, invalid_output=False, timed_out=False, budget_exceeded=False,
+             validation_reason=None):
         with self._claimed(run_id, token) as (connection, snapshot):
             timestamp = now(connection)
             step = next(s for s in snapshot["steps"] if s["step_id"] == step_id)
@@ -487,3 +634,6 @@ class Store:
             self._close_reservations(connection, run_id, step_id)
             step.update(status="failed", completed_at=timestamp, error=error)
             self._emit(connection, snapshot, "step.updated", step, timestamp)
+            if snapshot["manifest"]["version"] == workflow.REVIEWED_VERSION:
+                self._record_evaluation(connection, snapshot, step_id, None,
+                                        failed_evaluation(validation_reason or error["message"]), timestamp)

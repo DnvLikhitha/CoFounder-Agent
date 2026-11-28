@@ -80,6 +80,8 @@ class StepSpec:
 
 LIVE_VERSION = "live-startup-v1"
 GRAPH_VERSION = "startup-langgraph-v1"
+REVIEWED_VERSION = "startup-reviewed-v1"
+GRAPH_VERSIONS = (GRAPH_VERSION, REVIEWED_VERSION)
 FAKE_VERSIONS = ("fake-business-v1", "fake-business-v2")
 LIVE_STEPS = MappingProxyType({
     "problem_refined": StepSpec((), (), live_outputs.RefinedProblem,
@@ -139,6 +141,7 @@ check_graph({name: spec.required + spec.optional for name, spec in LIVE_STEPS.it
 WORKFLOWS = MappingProxyType({
     LIVE_VERSION: LIVE_STEPS,
     GRAPH_VERSION: LIVE_STEPS,
+    REVIEWED_VERSION: LIVE_STEPS,
     "fake-business-v1": MappingProxyType({
         # The original worker validated Artifact.content as JSON only.
         "business_model": StepSpec((), (), None),

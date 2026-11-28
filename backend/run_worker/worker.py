@@ -14,7 +14,7 @@ from backend.run_worker.live_agents import PROMPT_BUNDLES, live_provider, verify
 from backend.run_worker.provider_call import ClaimCalls, ProviderTimeout, call_with_deadline
 from backend.run_worker.store import LostClaim, Store, StoreError
 from backend.run_worker.workflow import (
-    FAKE_VERSIONS, GRAPH_VERSION, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure,
+    FAKE_VERSIONS, GRAPH_VERSIONS, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure,
     check_graph, fake_provider,
 )
 from backend.safe_logging import configure_safe_logging
@@ -33,7 +33,8 @@ def execute_claim(store, claim, provider=None, lease_seconds=30, heartbeat_mode=
     run_id, token = claim
     # The manifest is frozen in PostgreSQL when submitted.
     version, definitions, states = store.workflow(run_id, token)
-    if version == GRAPH_VERSION:
+    if version in GRAPH_VERSIONS:
+        from backend.run_worker.evaluator import judge_provider
         from backend.run_worker.graph import demo_provider, execute_graph
 
         configuration = store.graph_configuration(*claim)
@@ -47,8 +48,17 @@ def execute_claim(store, claim, provider=None, lease_seconds=30, heartbeat_mode=
                     return call_with_deadline(provider, step_id, body, upstream,
                                               settings.v1_provider_timeout_seconds, calls)
 
+            judge = None
+            if configuration["llm_evaluation"]:
+                budgeted_judge = partial(judge_provider, database=store, claim=claim,
+                                         profile=configuration["model_profile"], timeout=settings.v1_provider_timeout_seconds)
+
+                def judge(step_id, body, upstream):
+                    return call_with_deadline(budgeted_judge, step_id, body, upstream,
+                                              settings.v1_provider_timeout_seconds, calls)
+
             execute_graph(store, claim, configuration, execute, calls, lease_seconds=lease_seconds,
-                          heartbeat_mode=heartbeat_mode, review=review_pricing)
+                          heartbeat_mode=heartbeat_mode, review=review_pricing, judge=judge)
         return
 
     # Drain jobs pinned before the graph migration with their original scheduler.
@@ -128,10 +138,10 @@ def main():
     except ValueError as exc:
         parser.error(str(exc))
     if mode == "live":
-        claim_options = dict(versions=(LIVE_VERSION, GRAPH_VERSION), prompt_versions=PROMPT_BUNDLES,
+        claim_options = dict(versions=(LIVE_VERSION, *GRAPH_VERSIONS), prompt_versions=PROMPT_BUNDLES,
                              model_profiles=PROFILES)
     else:
-        claim_options = dict(versions=(*FAKE_VERSIONS, GRAPH_VERSION))
+        claim_options = dict(versions=(*FAKE_VERSIONS, *GRAPH_VERSIONS))
     store = Store(settings.database_url)
     while True:
         try:

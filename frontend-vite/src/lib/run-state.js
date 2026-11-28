@@ -39,6 +39,9 @@ export function checkArtifact(artifact, runId, reference) {
       artifact.reference.kind !== reference.kind ||
       artifact.reference.media_type !== reference.media_type ||
       artifact.reference.quality !== reference.quality ||
+      artifact.reference.revision !== reference.revision ||
+      artifact.reference.supersedes_artifact_id !== reference.supersedes_artifact_id ||
+      JSON.stringify(artifact.reference.input_artifact_ids) !== JSON.stringify(reference.input_artifact_ids) ||
       (reference.media_type !== 'application/json' && typeof artifact.content !== 'string')) {
     throw new ProtocolError('The artifact does not match the requested revision or v1 contract.')
   }

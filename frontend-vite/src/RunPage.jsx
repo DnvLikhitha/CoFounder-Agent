@@ -79,7 +79,8 @@ function RunPage({ runId, client }) {
       <div className="run-grid">
         <div className="results-workspace">
           <OutputSection artifacts={snapshot.artifacts} evaluations={snapshot.evaluations} client={client} runId={runId}
-            steps={progress.steps} status={snapshot.status} activeId={activeArtifactId} onSelect={setActiveArtifactId} />
+            steps={progress.steps} status={snapshot.status} activeId={activeArtifactId} onSelect={setActiveArtifactId}
+            pricingReview={review?.revision_kind === 'pricing'} />
           {exportable && <Exports client={client} runId={runId} partial={snapshot.status === 'partial'} />}
         </div>
         <AgentProgressTracker steps={progress.steps} runStatus={snapshot.status} artifacts={snapshot.artifacts}

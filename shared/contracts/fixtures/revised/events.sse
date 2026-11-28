@@ -1,0 +1,100 @@
+id: 1
+event: run.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":1,"type":"run.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"status":"running","updated_at":"2026-11-28T00:00:00Z","completed_at":null,"error":null}}
+
+id: 2
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":2,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"pricing_strategy","status":"running","attempt":1,"started_at":"2026-11-28T00:00:00Z","completed_at":null,"error":null}}
+
+id: 3
+event: artifact.created
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":3,"type":"artifact.created","occurred_at":"2026-11-28T00:00:00Z","data":{"artifact_id":"pricing_strategy","step_id":"pricing_strategy","kind":"pricing_strategy","title":"Pricing Strategy","media_type":"application/json","quality":"complete","created_at":"2026-11-28T00:00:00Z","href":"/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/pricing_strategy","revision":1,"supersedes_artifact_id":null,"input_artifact_ids":[]}}
+
+id: 4
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":4,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"pricing_strategy","status":"succeeded","attempt":1,"started_at":"2026-11-28T00:00:00Z","completed_at":"2026-11-28T00:00:00Z","error":null}}
+
+id: 5
+event: evaluation.completed
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":5,"type":"evaluation.completed","occurred_at":"2026-11-28T00:00:00Z","data":{"evaluation_id":"pricing_strategy-heuristic-evaluation","step_id":"pricing_strategy","artifact_id":"pricing_strategy","evaluator":"deterministic-checks","evaluator_version":"1","method":"heuristic","outcome":"passed","score":1,"dimensions":[{"dimension":"task_completion","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"relevance","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"consistency","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"grounding","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"completeness","outcome":"passed","reason":"Synthetic regression fixture."}],"evidence":[],"reasons":[],"created_at":"2026-11-28T00:00:00Z"}}
+
+id: 6
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":6,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"financial_projections","status":"running","attempt":1,"started_at":"2026-11-28T00:00:00Z","completed_at":null,"error":null}}
+
+id: 7
+event: artifact.created
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":7,"type":"artifact.created","occurred_at":"2026-11-28T00:00:00Z","data":{"artifact_id":"financial_projections","step_id":"financial_projections","kind":"financial_projections","title":"Financial Projections","media_type":"application/json","quality":"complete","created_at":"2026-11-28T00:00:00Z","href":"/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/financial_projections","revision":1,"supersedes_artifact_id":null,"input_artifact_ids":["pricing_strategy"]}}
+
+id: 8
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":8,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"financial_projections","status":"succeeded","attempt":1,"started_at":"2026-11-28T00:00:00Z","completed_at":"2026-11-28T00:00:00Z","error":null}}
+
+id: 9
+event: evaluation.completed
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":9,"type":"evaluation.completed","occurred_at":"2026-11-28T00:00:00Z","data":{"evaluation_id":"financial_projections-heuristic-evaluation","step_id":"financial_projections","artifact_id":"financial_projections","evaluator":"deterministic-checks","evaluator_version":"1","method":"heuristic","outcome":"passed","score":1,"dimensions":[{"dimension":"task_completion","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"relevance","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"consistency","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"grounding","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"completeness","outcome":"passed","reason":"Synthetic regression fixture."}],"evidence":[],"reasons":[],"created_at":"2026-11-28T00:00:00Z"}}
+
+id: 10
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":10,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"pricing_strategy","status":"awaiting_review","attempt":1,"started_at":"2026-11-28T00:00:00Z","completed_at":null,"error":null}}
+
+id: 11
+event: review.requested
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":11,"type":"review.requested","occurred_at":"2026-11-28T00:00:00Z","data":{"review_id":"pricing-review-1","step_id":"pricing_strategy","artifact_ids":["pricing_strategy"],"revision_kind":"pricing","prompt":"Review the pricing assumptions.","created_at":"2026-11-28T00:00:00Z"}}
+
+id: 12
+event: run.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":12,"type":"run.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"status":"awaiting_review","updated_at":"2026-11-28T00:00:00Z","completed_at":null,"error":null}}
+
+id: 13
+event: review.decided
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":13,"type":"review.decided","occurred_at":"2026-11-28T00:00:00Z","data":{"run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","review_id":"pricing-review-1","decision":{"decision_id":"40000000-0000-4000-8000-000000000001","decision":"revise","artifact_ids":["pricing_strategy"],"comment":null,"pricing_revision":{"tier_name":"Starter","price_monthly_usd":50,"price_annual_usd":500}},"decided_at":"2026-11-28T00:00:00Z","event_id":13}}
+
+id: 14
+event: artifact.created
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":14,"type":"artifact.created","occurred_at":"2026-11-28T00:00:00Z","data":{"artifact_id":"pricing_strategy-r2","step_id":"pricing_strategy","kind":"pricing_strategy","title":"Pricing Strategy","media_type":"application/json","quality":"complete","created_at":"2026-11-28T00:00:00Z","href":"/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/pricing_strategy-r2","revision":2,"supersedes_artifact_id":"pricing_strategy","input_artifact_ids":[]}}
+
+id: 15
+event: evaluation.completed
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":15,"type":"evaluation.completed","occurred_at":"2026-11-28T00:00:00Z","data":{"evaluation_id":"pricing_strategy-r2-heuristic-evaluation","step_id":"pricing_strategy","artifact_id":"pricing_strategy-r2","evaluator":"deterministic-checks","evaluator_version":"1","method":"heuristic","outcome":"passed","score":1,"dimensions":[{"dimension":"task_completion","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"relevance","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"consistency","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"grounding","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"completeness","outcome":"passed","reason":"Synthetic regression fixture."}],"evidence":[],"reasons":[],"created_at":"2026-11-28T00:00:00Z"}}
+
+id: 16
+event: review.requested
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":16,"type":"review.requested","occurred_at":"2026-11-28T00:00:00Z","data":{"review_id":"pricing-review-2","step_id":"pricing_strategy","artifact_ids":["pricing_strategy-r2"],"revision_kind":"pricing","prompt":"Review the pricing assumptions.","created_at":"2026-11-28T00:00:00Z"}}
+
+id: 17
+event: review.decided
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":17,"type":"review.decided","occurred_at":"2026-11-28T00:00:00Z","data":{"run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","review_id":"pricing-review-2","decision":{"decision_id":"40000000-0000-4000-8000-000000000002","decision":"approve","artifact_ids":["pricing_strategy-r2"],"comment":null},"decided_at":"2026-11-28T00:00:00Z","event_id":17}}
+
+id: 18
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":18,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"pricing_strategy","status":"succeeded","attempt":1,"started_at":"2026-11-28T00:00:00Z","completed_at":"2026-11-28T00:00:00Z","error":null}}
+
+id: 19
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":19,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"financial_projections","status":"queued","attempt":1,"started_at":"2026-11-28T00:00:00Z","completed_at":null,"error":null}}
+
+id: 20
+event: run.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":20,"type":"run.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"status":"running","updated_at":"2026-11-28T00:00:00Z","completed_at":null,"error":null}}
+
+id: 21
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":21,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"financial_projections","status":"running","attempt":2,"started_at":"2026-11-28T00:00:00Z","completed_at":null,"error":null}}
+
+id: 22
+event: artifact.created
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":22,"type":"artifact.created","occurred_at":"2026-11-28T00:00:00Z","data":{"artifact_id":"financial_projections-r2","step_id":"financial_projections","kind":"financial_projections","title":"Financial Projections","media_type":"application/json","quality":"complete","created_at":"2026-11-28T00:00:00Z","href":"/api/v1/runs/d23ccf85-c9a2-47af-b808-d2200ad18b42/artifacts/financial_projections-r2","revision":2,"supersedes_artifact_id":"financial_projections","input_artifact_ids":["pricing_strategy-r2"]}}
+
+id: 23
+event: step.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":23,"type":"step.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"step_id":"financial_projections","status":"succeeded","attempt":2,"started_at":"2026-11-28T00:00:00Z","completed_at":"2026-11-28T00:00:00Z","error":null}}
+
+id: 24
+event: evaluation.completed
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":24,"type":"evaluation.completed","occurred_at":"2026-11-28T00:00:00Z","data":{"evaluation_id":"financial_projections-r2-heuristic-evaluation","step_id":"financial_projections","artifact_id":"financial_projections-r2","evaluator":"deterministic-checks","evaluator_version":"1","method":"heuristic","outcome":"passed","score":1,"dimensions":[{"dimension":"task_completion","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"relevance","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"consistency","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"grounding","outcome":"passed","reason":"Synthetic regression fixture."},{"dimension":"completeness","outcome":"passed","reason":"Synthetic regression fixture."}],"evidence":[],"reasons":[],"created_at":"2026-11-28T00:00:00Z"}}
+
+id: 25
+event: run.updated
+data: {"contract_version":"1.0","run_id":"d23ccf85-c9a2-47af-b808-d2200ad18b42","event_id":25,"type":"run.updated","occurred_at":"2026-11-28T00:00:00Z","data":{"status":"succeeded","updated_at":"2026-11-28T00:00:00Z","completed_at":"2026-11-28T00:00:00Z","error":null}}
+

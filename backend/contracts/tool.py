@@ -81,18 +81,27 @@ def validate_fixture(directory):
     artifacts = json.loads((directory / "artifacts.json").read_text(encoding="utf-8"))
     assert [a["reference"] for a in artifacts] == final["artifacts"]
     artifact_ids = {a["artifact_id"] for a in final["artifacts"]}
+    seen_artifacts = {}
     for artifact in artifacts:
         Artifact.model_validate(artifact)
         reference = artifact["reference"]
         assert artifact["run_id"] == final["run_id"]
         assert reference["step_id"] in step_ids
         assert reference["href"] == f'/api/v1/runs/{final["run_id"]}/artifacts/{reference["artifact_id"]}'
+        previous = reference.get("supersedes_artifact_id")
+        if previous:
+            assert previous in seen_artifacts
+            assert reference["step_id"] == seen_artifacts[previous]["step_id"]
+            assert reference["revision"] == seen_artifacts[previous]["revision"] + 1
+        assert set(reference.get("input_artifact_ids") or []) <= seen_artifacts.keys()
+        seen_artifacts[reference["artifact_id"]] = reference
     for evaluation in final["evaluations"]:
         assert evaluation["step_id"] is None or evaluation["step_id"] in step_ids
         assert evaluation["artifact_id"] is None or evaluation["artifact_id"] in artifact_ids
+        assert all(item["artifact_id"] in artifact_ids for item in evaluation.get("evidence") or [])
     assert final["pending_review"] is None
     assert final["completed_at"] is not None
-    assert final["status"] == directory.name
+    assert final["status"] == {"revised": "succeeded"}.get(directory.name, directory.name)
     if final["status"] == "succeeded":
         assert all(s["status"] == "succeeded" for s in final["steps"])
         assert all(a["quality"] == "complete" for a in final["artifacts"])
@@ -144,7 +153,7 @@ def main():
                 actual = {k: v for k, v in operation.items() if k not in ignored}
                 documented = {k: v for k, v in expected[method].items() if k not in ignored}
                 assert actual == documented, f"Runtime contract drifted for {method} {path}"
-    print("Validated examples, both replay fixtures, every reconnect boundary, and schema/SSE consistency.")
+    print("Validated examples, replay fixtures, every reconnect boundary, and schema/SSE consistency.")
 
 
 if __name__ == "__main__":

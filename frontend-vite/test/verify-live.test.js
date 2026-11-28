@@ -12,6 +12,10 @@ const mockTransport = `
   const { final, artifacts } = fullAgentFixtures['full-succeeded']
   const { LIVE_SUPABASE_URL, LIVE_API_ORIGIN, VERIFIER_FIXTURE_MANIFEST } = process.env
   const runPath = '/api/v1/runs/' + final.run_id
+  const reviewed = VERIFIER_FIXTURE_MANIFEST === 'startup-reviewed-v1'
+  const draft = artifacts.find(({ reference }) => reference.kind === 'financial_projections')
+  const approved = { ...draft, reference: { ...draft.reference, artifact_id: 'financial_projections-r2', revision: 2,
+    supersedes_artifact_id: draft.reference.artifact_id, href: draft.reference.href + '-r2' } }
   globalThis.fetch = async (input, options) => {
     const { origin, pathname } = new URL(input)
     if (origin === LIVE_SUPABASE_URL && pathname === '/auth/v1/token') {
@@ -28,9 +32,11 @@ const mockTransport = `
     }
     if (origin === LIVE_API_ORIGIN) {
       if (pathname === runPath) {
-        return Response.json({ ...final, manifest: { ...final.manifest, version: VERIFIER_FIXTURE_MANIFEST } })
+        return Response.json({ ...final, manifest: { ...final.manifest, version: VERIFIER_FIXTURE_MANIFEST },
+          artifacts: reviewed ? [...final.artifacts, approved.reference] : final.artifacts })
       }
-      const artifact = artifacts.find(({ reference }) => pathname === runPath + '/artifacts/' + reference.artifact_id)
+      const available = reviewed ? [...artifacts.filter((item) => item !== draft), approved] : artifacts
+      const artifact = available.find(({ reference }) => pathname === runPath + '/artifacts/' + reference.artifact_id)
       if (artifact) return Response.json(artifact)
     }
     return new Response(null, { status: 404 })
@@ -58,8 +64,8 @@ function runVerifier(version) {
   return result
 }
 
-test('live verifier checks all 16 outputs for both supported manifests', () => {
-  for (const version of ['startup-langgraph-v1', 'live-startup-v1']) {
+test('live verifier checks all 16 outputs including the latest approved revision', () => {
+  for (const version of ['startup-reviewed-v1', 'startup-langgraph-v1', 'live-startup-v1']) {
     const { status, stdout, stderr } = runVerifier(version)
     assert.equal(status, 0, `${version}: ${stderr}`)
     const passed = [...stdout.matchAll(/^PASS (\w+)\r?$/gm)].map((match) => match[1])

@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     v1_run_token_limit: int = Field(default=500_000, gt=0, le=1_000_000_000)
     v1_run_cost_limit_nanousd: int = Field(default=250_000_000, gt=0, le=1_000_000_000_000)
     v1_require_founder_review: bool = False
+    v1_require_pricing_review: bool = False
+    v1_llm_evaluation: bool = False
     v1_jwt_secret: str = ""
     v1_jwt_issuer: str = "cofounder-agent"
     v1_jwt_audience: str = "cofounder-api"

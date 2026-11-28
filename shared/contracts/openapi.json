@@ -1001,6 +1001,49 @@
             "type": "string",
             "pattern": "^/api/v1/runs/[^/]+/artifacts/[^/]+$",
             "title": "Href"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "supersedes_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[a-zA-Z0-9_-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Artifact Id"
+          },
+          "input_artifact_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Artifact Ids"
           }
         },
         "additionalProperties": false,
@@ -1016,6 +1059,43 @@
           "href"
         ],
         "title": "ArtifactReference"
+      },
+      "DimensionResult": {
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "task_completion",
+              "relevance",
+              "consistency",
+              "grounding",
+              "completeness"
+            ],
+            "title": "Dimension"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "needs_review",
+              "not_applicable"
+            ],
+            "title": "Outcome"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "dimension",
+          "outcome",
+          "reason"
+        ],
+        "title": "DimensionResult"
       },
       "ErrorDetail": {
         "properties": {
@@ -1133,6 +1213,49 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "heuristic",
+                  "llm"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "dimensions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DimensionResult"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dimensions"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EvidenceReference"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
           }
         },
         "additionalProperties": false,
@@ -1149,6 +1272,50 @@
           "created_at"
         ],
         "title": "EvaluationResult"
+      },
+      "EvidenceReference": {
+        "properties": {
+          "claim_path": {
+            "type": "string",
+            "pattern": "^/",
+            "title": "Claim Path"
+          },
+          "artifact_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Artifact Id"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "relationship": {
+            "type": "string",
+            "enum": [
+              "citation",
+              "matched_value",
+              "research_context"
+            ],
+            "title": "Relationship"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "claim_path",
+          "artifact_id",
+          "relationship"
+        ],
+        "title": "EvidenceReference"
       },
       "HistoryPage": {
         "properties": {
@@ -1180,6 +1347,34 @@
         "title": "HistoryPage"
       },
       "JsonValue": {},
+      "PricingRevision": {
+        "properties": {
+          "tier_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Tier Name"
+          },
+          "price_monthly_usd": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Price Monthly Usd"
+          },
+          "price_annual_usd": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Price Annual Usd"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tier_name",
+          "price_monthly_usd",
+          "price_annual_usd"
+        ],
+        "title": "PricingRevision"
+      },
       "ReviewDecision": {
         "properties": {
           "decision_id": {
@@ -1191,7 +1386,8 @@
             "type": "string",
             "enum": [
               "approve",
-              "reject"
+              "reject",
+              "revise"
             ],
             "title": "Decision"
           },
@@ -1206,6 +1402,35 @@
               }
             ],
             "title": "Comment"
+          },
+          "artifact_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                },
+                "type": "array",
+                "maxItems": 16,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Ids"
+          },
+          "pricing_revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PricingRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -1297,6 +1522,21 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "revision_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pricing"
+                ],
+                "const": "pricing"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Kind"
           }
         },
         "additionalProperties": false,

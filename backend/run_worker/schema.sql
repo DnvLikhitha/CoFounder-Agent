@@ -33,6 +33,9 @@ ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS require_review boolean NOT NULL DEF
 ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS graph_mode text CHECK (graph_mode IN ('live', 'fake'));
 ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS graph_interrupt_id text;
 ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS graph_resume_id text;
+ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS graph_resume_payload jsonb;
+ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS pricing_review boolean NOT NULL DEFAULT false;
+ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS llm_evaluation boolean NOT NULL DEFAULT false;
 ALTER TABLE v1_runs ALTER COLUMN submission_key DROP NOT NULL;
 
 -- Pre-ledger live runs start with a fixed budget for work after the migration.
@@ -73,6 +76,13 @@ CREATE TABLE IF NOT EXISTS v1_review_decisions (
     PRIMARY KEY (run_id, decision_id),
     UNIQUE (run_id, review_id)
 );
+ALTER TABLE v1_review_decisions ADD COLUMN IF NOT EXISTS review_kind text NOT NULL DEFAULT 'final';
+
+ALTER TABLE v1_llm_attempts ADD COLUMN IF NOT EXISTS purpose text NOT NULL DEFAULT 'generation';
+ALTER TABLE v1_llm_attempts ADD COLUMN IF NOT EXISTS execution_revision integer NOT NULL DEFAULT 1;
+ALTER TABLE v1_llm_attempts DROP CONSTRAINT IF EXISTS v1_llm_attempts_run_id_step_id_attempt_no_key;
+CREATE UNIQUE INDEX IF NOT EXISTS v1_llm_attempt_revision
+    ON v1_llm_attempts (run_id, step_id, purpose, execution_revision, attempt_no);
 
 CREATE TABLE IF NOT EXISTS v1_worker_heartbeats (
     mode text PRIMARY KEY,

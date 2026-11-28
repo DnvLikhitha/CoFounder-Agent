@@ -23,7 +23,7 @@ function loadFixtures(scenario) {
   }
 }
 
-const fixtures = { succeeded: loadFixtures('succeeded'), partial: loadFixtures('partial') }
+const fixtures = { succeeded: loadFixtures('succeeded'), partial: loadFixtures('partial'), revised: loadFixtures('revised') }
 const scenarios = Object.entries(fixtures)
 
 test('browser configuration accepts public keys and rejects privileged keys and insecure origins', () => {
@@ -106,9 +106,14 @@ test('loads exact v1 artifact revisions and handles missing or unsafe evidence',
   assert.equal(evidence.sources.length, 2)
   assert.equal(evidence.sources[0].url, null)
   assert.deepEqual(evidence.sources[1], { label: 'Survey', url: 'https://example.org/survey' })
+  const revised = fixtures.revised.artifacts.find(({ reference }) => reference.artifact_id === 'financial_projections-r2')
+  assert.equal(checkArtifact(revised, revised.run_id, revised.reference), revised)
+  assert.throws(() => checkArtifact(revised, revised.run_id, {
+    ...revised.reference, input_artifact_ids: ['pricing_strategy'],
+  }), ProtocolError)
 })
 
-test('live approval and rejection send the v1 payload; revision stays local', async () => {
+test('live approval, rejection, and revision are bound to the reviewed artifact IDs', async () => {
   const { snapshot } = fixtures.succeeded
   const payload = { decision_id: '10000000-0000-4000-8000-000000000003', decision: 'approve', comment: null }
   const calls = []
@@ -121,8 +126,41 @@ test('live approval and rejection send the v1 payload; revision stays local', as
   await client.decideReview(snapshot.run_id, 'review-1', rejection, { expectedArtifactIds: ['research'] })
   await assert.rejects(client.decideReview(snapshot.run_id, 'review-1', { ...payload, decision: 'revise' }),
     { status: 422 })
+  const revise = {
+    ...payload, decision: 'revise', decision_id: '10000000-0000-4000-8000-000000000006',
+    pricing_revision: { tier_name: 'Starter', price_monthly_usd: 25, price_annual_usd: 250 },
+  }
+  await client.decideReview(snapshot.run_id, 'review-1', revise, { expectedArtifactIds: ['pricing_strategy-r2'] })
   const url = `/api/v1/runs/${snapshot.run_id}/reviews/review-1/decisions`
-  assert.deepEqual(calls, [{ url, payload }, { url, payload: rejection }])
+  assert.deepEqual(calls, [
+    { url, payload: { ...payload, artifact_ids: ['research'] } },
+    { url, payload: { ...rejection, artifact_ids: ['research'] } },
+    { url, payload: { ...revise, artifact_ids: ['pricing_strategy-r2'] } },
+  ])
+})
+
+test('review retry after token refresh preserves the decision ID and artifact revision', async () => {
+  const { snapshot } = fixtures.revised
+  const payload = { decision_id: '10000000-0000-4000-8000-000000000008', decision: 'approve', comment: null }
+  const calls = []
+  const client = createLiveClient(async (url, options) => {
+    calls.push({ url, token: options.headers.Authorization, body: JSON.parse(options.body) })
+    if (calls.length === 1) return Response.json({}, { status: 401 })
+    return Response.json({})
+  }, {
+    getToken: async () => 'expired',
+    recover: async (token) => {
+      assert.equal(token, 'expired')
+      return 'renewed'
+    },
+  })
+  await client.decideReview(snapshot.run_id, 'pricing-review-2', payload, { expectedArtifactIds: ['pricing_strategy-r2'] })
+  const url = `/api/v1/runs/${snapshot.run_id}/reviews/pricing-review-2/decisions`
+  const body = { ...payload, artifact_ids: ['pricing_strategy-r2'] }
+  assert.deepEqual(calls, [
+    { url, token: 'Bearer expired', body },
+    { url, token: 'Bearer renewed', body },
+  ])
 })
 
 test('authenticated client includes a bearer token on REST, events, and downloads', async () => {
@@ -358,7 +396,8 @@ test('mock runs survive a reload at review and retain partial artifacts after ap
   const records = new Map()
   const storage = { getItem: (key) => records.get(key), setItem: (key, value) => records.set(key, value) }
   const runId = '00000000-0000-4000-8000-000000000003'
-  const config = { fixtures, storage, now: () => time, makeId: () => runId, interval: 100 }
+  const config = { fixtures: { succeeded: fixtures.succeeded, partial: fixtures.partial },
+    storage, now: () => time, makeId: () => runId, interval: 100 }
   const mock = createMockClient(config)
   const input = { problem: 'Find internships for university students.', domain: null, geography: null }
   const queued = await mock.startRun(input, { scenario: 'partial' })

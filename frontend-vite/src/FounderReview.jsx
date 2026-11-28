@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ArtifactContent } from './ArtifactContent.jsx'
 import { Assumptions } from './OutputSection.jsx'
 import { readEvidence } from './lib/artifact-details.js'
 import { useArtifact } from './lib/use-artifact.js'
@@ -16,14 +17,33 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
     status: client.getRevisionPreview?.(runId, review.review_id) ? 'revision-requested' : 'idle',
   }))
   const [revisionComment, setRevisionComment] = useState(null)
+  const [pricingDraft, setPricingDraft] = useState(null)
+  const pricingReview = review.revision_kind === 'pricing' && client.supportsPricingRevision
+  const pricingRef = pricingReview ? artifacts.find((item) => item.artifact_id === review.artifact_ids[0]) : null
+  const pricing = useArtifact(client, runId, pricingRef)
+  const tiers = pricing.result?.artifact?.content?.tiers ?? []
   useEffect(() => () => pending.current?.abort(), [])
+
+  function chooseTier(name) {
+    const tier = tiers.find((item) => item.tier_name === name)
+    if (tier) setPricingDraft({
+      tier_name: tier.tier_name,
+      price_monthly_usd: String(tier.price_monthly_usd),
+      price_annual_usd: String(tier.price_annual_usd),
+    })
+  }
 
   async function submit(decision) {
     if (pending.current) return
     const payload = submission.current ?? {
       decision_id: crypto.randomUUID(),
       decision,
-      comment: decision === 'revise' ? revisionComment.trim() : null,
+      comment: decision === 'revise' ? revisionComment.trim() || null : null,
+      ...(decision === 'revise' && pricingReview ? { pricing_revision: {
+        tier_name: pricingDraft.tier_name,
+        price_monthly_usd: Number(pricingDraft.price_monthly_usd),
+        price_annual_usd: Number(pricingDraft.price_annual_usd),
+      } } : {}),
     }
     submission.current = payload
     const request = new AbortController()
@@ -35,7 +55,7 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
         expectedArtifactIds: review.artifact_ids,
       })
       if (request.signal.aborted) return
-      if (decision === 'revise') {
+      if (decision === 'revise' && !pricingReview) {
         submission.current = null
         setRevisionComment(null)
         setState({ status: 'revision-requested' })
@@ -58,7 +78,8 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
 
   const revisions = review.artifact_ids.map((id) => ({ id, reference: artifacts.find((item) => item.artifact_id === id) }))
   const canAct = state.status === 'idle' || state.status === 'revision-requested'
-  const canRevise = client.supportsRevisionPreview && revisions.some(({ reference }) => reference)
+  const canRevise = pricingReview ? tiers.length > 0 : (
+    client.supportsRevisionPreview && revisions.some(({ reference }) => reference))
   return (
     <section className="panel review" aria-labelledby="review-heading">
       <h2 id="review-heading">Review required</h2>
@@ -66,7 +87,8 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
       <p className="muted">Checkpoint <code>{review.review_id}</code></p>
       {revisions.length === 0 && <p className="muted">This checkpoint has no linked artifact revision.</p>}
       {revisions.map(({ id, reference }) => reference ? (
-        <ReviewArtifact key={id} reference={reference} client={client} runId={runId} onView={onViewArtifact} />
+        <ReviewArtifact key={id} reference={reference} client={client} runId={runId} onView={onViewArtifact}
+          pricing={id === pricingRef?.artifact_id ? pricing : null} />
       ) : <p key={id} className="muted">Artifact revision <code>{id}</code> is unavailable.</p>)}
       {state.error && <p className="notice error" role="alert">{state.error}</p>}
       {state.status === 'revision-requested' && (
@@ -76,17 +98,36 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
         <div className="actions">
           <button className="primary" onClick={() => submit('approve')}>Approve</button>
           <button onClick={() => submit('reject')}>Reject</button>
-          {canRevise && <button onClick={() => setRevisionComment('')}>Request revision</button>}
-          {!client.supportsRevisionPreview && <span className="muted">Revision requests are unavailable in v1.</span>}
+          {canRevise && <button onClick={() => {
+            if (pricingReview) chooseTier(tiers[0].tier_name)
+            setRevisionComment('')
+          }}>{pricingReview ? 'Revise pricing' : 'Request revision'}</button>}
         </div>
       )}
       {canAct && revisionComment !== null && (
         <form className="revision-form" onSubmit={(event) => { event.preventDefault(); void submit('revise') }}>
-          <label htmlFor="revision-comment">What should change?</label>
-          <textarea id="revision-comment" className="input-surface" rows={3} maxLength={2000} required
+          {pricingReview && pricingDraft && (
+            <>
+              <label htmlFor="revision-tier">Pricing tier</label>
+              <select id="revision-tier" className="input-surface" value={pricingDraft.tier_name}
+                onChange={(event) => chooseTier(event.target.value)}>
+                {tiers.map((tier) => <option key={tier.tier_name}>{tier.tier_name}</option>)}
+              </select>
+              {[['price_monthly_usd', 'Monthly price (USD)'], ['price_annual_usd', 'Annual price (USD)']].map(([key, label]) => (
+                <label key={key}>{label}
+                  <input className="input-surface" type="number" min="0" step="any" required value={pricingDraft[key]}
+                    onChange={(event) => setPricingDraft({ ...pricingDraft, [key]: event.target.value })} />
+                </label>
+              ))}
+            </>
+          )}
+          <label htmlFor="revision-comment">{pricingReview ? 'Reason for the change (optional)' : 'What should change?'}</label>
+          <textarea id="revision-comment" className="input-surface" rows={3} maxLength={2000} required={!pricingReview}
             value={revisionComment} onChange={(event) => setRevisionComment(event.target.value)} />
           <div className="actions">
-            <button className="primary" disabled={!revisionComment.trim()}>Submit revision request</button>
+            <button className="primary" disabled={!pricingReview && !revisionComment.trim()}>
+              {pricingReview ? 'Save revision for approval' : 'Submit revision request'}
+            </button>
             <button type="button" onClick={() => setRevisionComment(null)}>Cancel</button>
           </div>
         </form>
@@ -97,14 +138,16 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
       {state.status === 'sending' && <p role="status">Sending decision…</p>}
       {state.status === 'submitted' && <p role="status">
         {state.decision === 'reject' ? 'Rejection submitted. Waiting for the final run status…'
-          : 'Approval submitted. Waiting for the run to resume…'}
+          : state.decision === 'revise' ? 'Revision submitted. Waiting for the new checkpoint…'
+            : 'Approval submitted. Waiting for the run to resume…'}
       </p>}
     </section>
   )
 }
 
-function ReviewArtifact({ reference, client, runId, onView }) {
-  const { result, retry } = useArtifact(client, runId, reference)
+function ReviewArtifact({ reference, client, runId, onView, pricing }) {
+  const details = useArtifact(client, runId, pricing ? null : reference)
+  const { result, retry } = pricing ?? details
   return (
     <div className="review-artifact">
       <div className="section-heading">
@@ -115,7 +158,9 @@ function ReviewArtifact({ reference, client, runId, onView }) {
       <h4>Assumptions under review</h4>
       {!result && <p role="status">Loading assumptions…</p>}
       {result?.error && <p className="muted">Assumptions could not be loaded. <button onClick={retry}>Retry</button></p>}
-      {result?.artifact && <Assumptions entries={readEvidence(result.artifact.content).assumptions} />}
+      {result?.artifact && (pricing
+        ? <ArtifactContent reference={reference} content={result.artifact.content} />
+        : <Assumptions entries={readEvidence(result.artifact.content).assumptions} />)}
     </div>
   )
 }

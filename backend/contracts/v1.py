@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
 
 EventId = Annotated[int, Field(ge=0, le=9007199254740991)]
 Identifier = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")]
@@ -81,12 +81,31 @@ class ArtifactReference(Contract):
     quality: Literal["complete", "partial", "fallback"]
     created_at: AwareDatetime
     href: str = Field(pattern=r"^/api/v1/runs/[^/]+/artifacts/[^/]+$")
+    revision: int | None = Field(default=None, ge=1)
+    supersedes_artifact_id: Identifier | None = None
+    input_artifact_ids: list[Identifier] | None = None
 
 
 class Artifact(Contract):
     run_id: UUID
     reference: ArtifactReference
     content: JsonValue
+
+
+Dimension = Literal["task_completion", "relevance", "consistency", "grounding", "completeness"]
+
+
+class DimensionResult(Contract):
+    dimension: Dimension
+    outcome: Literal["passed", "failed", "needs_review", "not_applicable"]
+    reason: str
+
+
+class EvidenceReference(Contract):
+    claim_path: str = Field(pattern=r"^/")
+    artifact_id: Identifier
+    source_url: str | None = None
+    relationship: Literal["citation", "matched_value", "research_context"]
 
 
 class EvaluationResult(Contract):
@@ -99,6 +118,9 @@ class EvaluationResult(Contract):
     score: float | None = Field(ge=0, le=1)
     reasons: list[str]
     created_at: AwareDatetime
+    method: Literal["heuristic", "llm"] | None = None
+    dimensions: list[DimensionResult] | None = None
+    evidence: list[EvidenceReference] | None = None
 
 
 class ReviewRequest(Contract):
@@ -107,12 +129,27 @@ class ReviewRequest(Contract):
     artifact_ids: list[Identifier]
     prompt: str
     created_at: AwareDatetime
+    revision_kind: Literal["pricing"] | None = None
+
+
+class PricingRevision(Contract):
+    tier_name: str = Field(min_length=1, max_length=200)
+    price_monthly_usd: float = Field(ge=0, allow_inf_nan=False, strict=True)
+    price_annual_usd: float = Field(ge=0, allow_inf_nan=False, strict=True)
 
 
 class ReviewDecision(Contract):
     decision_id: UUID
-    decision: Literal["approve", "reject"]
+    decision: Literal["approve", "reject", "revise"]
     comment: str | None = Field(default=None, max_length=2000)
+    artifact_ids: list[Identifier] | None = Field(default=None, min_length=1, max_length=16)
+    pricing_revision: PricingRevision | None = None
+
+    @model_validator(mode="after")
+    def revision_requires_prices(self):
+        if (self.decision == "revise") != (self.pricing_revision is not None):
+            raise ValueError("Pricing changes belong to a revise decision")
+        return self
 
 
 class ReviewReceipt(Contract):

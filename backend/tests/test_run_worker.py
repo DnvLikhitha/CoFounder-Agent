@@ -44,7 +44,8 @@ from backend.run_worker import workflow
 from backend.run_worker.store import LostClaim, Store, StoreError
 from backend.run_worker.worker import execute_claim
 from backend.run_worker.workflow import (
-    FAKE_VERSIONS, GRAPH_VERSION, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure, ProviderTimeout,
+    FAKE_VERSIONS, GRAPH_VERSION, REVIEWED_VERSION, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput,
+    ProviderFailure, ProviderTimeout,
     fake_provider, validate_output,
 )
 from backend.tests.test_live_agents import FIXTURE, FixtureGroq, fixture_provider, hang_during_pricing, wait_in_sibling_steps
@@ -124,6 +125,199 @@ class WorkerIntegrationTests(unittest.TestCase):
 
     def graph_run(self, key, mode="fake", **options):
         return self.database.submit("alice", key, self.body, version=GRAPH_VERSION, graph_mode=mode, **options)
+
+    def test_pricing_review_revisions_are_owner_scoped_durable_and_recompute_only_dependents(self):
+        with patch.object(settings, "v1_require_pricing_review", True):
+            accepted = self.client.post("/runs", headers=self.headers(), json=self.body)
+        self.assertEqual(accepted.status_code, 202)
+        initial = accepted.json()
+        run_id = initial["run_id"]
+        execute_claim(self.database, self.database.claim())
+        paused = self.database.snapshot("alice", run_id)
+        self.assertEqual(paused["status"], "awaiting_review")
+        self.assertIsNone(self.database.claim())
+        self.assertEqual(len(paused["artifacts"]), 14)
+        self.assertEqual(len(paused["evaluations"]), 14)
+        first = paused["pending_review"]
+        self.assertEqual(first["artifact_ids"], ["pricing_strategy"])
+        old_price = self.database.artifact("alice", run_id, "pricing_strategy")
+        old_forecast = self.database.artifact("alice", run_id, "financial_projections")
+        tier = old_price["content"]["tiers"][0]
+        monthly_price = tier["price_monthly_usd"]
+        path = f'/runs/{run_id}/reviews/{first["review_id"]}/decisions'
+        revision = {"decision_id": str(uuid4()), "decision": "revise", "artifact_ids": first["artifact_ids"],
+                    "pricing_revision": {"tier_name": tier["tier_name"], "price_monthly_usd": monthly_price,
+                                         "price_annual_usd": 900}}
+        self.assertEqual(self.client.post(path, headers=self.headers("bob"), json=revision).status_code, 404)
+        stale = {**revision, "artifact_ids": ["pricing_strategy-r2"]}
+        self.assertEqual(self.client.post(path, headers=self.headers(), json=stale).status_code, 409)
+        invalid = {**revision, "pricing_revision": {**revision["pricing_revision"], "tier_name": "unregistered"}}
+        self.assertEqual(self.client.post(path, headers=self.headers(), json=invalid).status_code, 422)
+        self.assertEqual(self.database.snapshot("alice", run_id), paused)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            duplicates = list(pool.map(lambda _: self.client.post(path, headers=self.headers(), json=revision), range(2)))
+        self.assertEqual([reply.status_code for reply in duplicates], [200, 200])
+        self.assertEqual(duplicates[0].json(), duplicates[1].json())
+        restarted = Store(self.dsn)
+        revised = restarted.snapshot("alice", run_id)
+        current = revised["pending_review"]
+        self.assertNotEqual(current["review_id"], first["review_id"])
+        self.assertEqual(current["artifact_ids"], ["pricing_strategy-r2"])
+        self.assertIsNone(restarted.claim())
+        stale_decision = {"decision_id": str(uuid4()), "decision": "approve", "artifact_ids": first["artifact_ids"]}
+        self.assertEqual(self.client.post(path, headers=self.headers(), json=stale_decision).status_code, 409)
+        updated = self.client.get(f"/runs/{run_id}/artifacts/pricing_strategy-r2", headers=self.headers()).json()
+        self.assertEqual(updated["reference"]["supersedes_artifact_id"], "pricing_strategy")
+        self.assertEqual(updated["content"]["tiers"][0]["price_monthly_usd"], monthly_price)
+        self.assertEqual(updated["content"]["tiers"][0]["price_annual_usd"], 900)
+        self.assertEqual(restarted.artifact("alice", run_id, "pricing_strategy"), old_price)
+        path = f'/runs/{run_id}/reviews/{current["review_id"]}/decisions'
+        approval = {**stale_decision, "decision_id": str(uuid4()), "artifact_ids": current["artifact_ids"]}
+        self.assertEqual(self.client.post(path, headers=self.headers(), json=approval).status_code, 200)
+        environment = {**os.environ, "DATABASE_URL": self.dsn, "V1_PROVIDER_MODE": "fake", "ENVIRONMENT": "development"}
+        process = subprocess.run([sys.executable, "-m", "backend.run_worker.worker", "--once"],
+                                 env=environment, capture_output=True, timeout=45)
+        self.assertEqual(process.returncode, 0, process.stderr.decode("utf-8", errors="replace"))
+        final = self.client.get(f"/runs/{run_id}", headers=self.headers()).json()
+        self.assertEqual(final["status"], "succeeded")
+        self.assertEqual(final["pending_review"], None)
+        self.assertEqual(len(final["artifacts"]), 18)
+        states = {step["step_id"]: step["attempt"] for step in final["steps"]}
+        self.assertEqual(states["financial_projections"], 2)
+        self.assertTrue(all(count == 1 for step, count in states.items() if step != "financial_projections"))
+        forecast = restarted.artifact("alice", run_id, "financial_projections-r2")
+        self.assertEqual(forecast["content"]["assumptions"]["reviewed_monthly_price_usd"], monthly_price)
+        final_month = forecast["content"]["monthly_projections"][-1]
+        self.assertEqual(final_month["tier_customers"][tier["tier_name"]], {"monthly": 6, "annual": 6})
+        self.assertEqual(final_month["mrr_usd"], 6 * monthly_price + 6 * 900 / 12)
+        self.assertNotEqual(forecast["content"]["arr_month_12_usd"], old_forecast["content"]["arr_month_12_usd"])
+        self.assertIn("pricing_strategy-r2", forecast["reference"]["input_artifact_ids"])
+        self.assertEqual(restarted.artifact("alice", run_id, "financial_projections"), old_forecast)
+        deck = restarted.artifact("alice", run_id, "pitch_deck")
+        self.assertIn("financial_projections-r2", deck["reference"]["input_artifact_ids"])
+        self.assertIn("financial_projections-r2", restarted.artifact("alice", run_id, "executive_summary")
+                      ["reference"]["input_artifact_ids"])
+        wire = self.client.get(f"/runs/{run_id}/events", headers=self.headers())
+        events = [json.loads(line[6:]) for line in wire.text.splitlines() if line.startswith("data: ")]
+        self.assertEqual(replay(initial, events), final)
+        self.assertEqual(sum(event["type"] == "review.requested" for event in events), 2)
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_revised_live_forecast_cannot_publish_draft_financials(self):
+        run = self.database.submit("alice", "stale-forecast", self.body, version=REVIEWED_VERSION,
+                                   graph_mode="live", pricing_review=True)
+        run_id = run["run_id"]
+        execute_claim(self.database, self.database.claim(), demo_provider)
+        pricing = self.database.artifact("alice", run_id, "pricing_strategy")["content"]
+        tier = pricing["tiers"][0]["tier_name"]
+        for action in ("revise", "approve"):
+            pending = self.database.snapshot("alice", run_id)["pending_review"]
+            decision = dict(decision_id=str(uuid4()), decision=action, artifact_ids=pending["artifact_ids"])
+            if action == "revise":
+                decision["pricing_revision"] = dict(tier_name=tier, price_monthly_usd=37, price_annual_usd=370)
+            self.database.decide_review("alice", run_id, pending["review_id"], decision)
+
+        draft = self.database.artifact("alice", run_id, "financial_projections")["content"]
+        claim = self.database.claim()
+        self.database.begin_step(*claim, "financial_projections")
+        with self.assertRaises(InvalidOutput):
+            self.database.complete_step(*claim, "financial_projections", draft)
+
+        def stale_provider(step, body, upstream):
+            self.assertEqual(step, "financial_projections")
+            candidate = demo_provider(step, body, upstream)
+            # Copy the approved price table but keep the original forecast's MRR, making ARR internally consistent.
+            for row, original in zip(candidate["monthly_projections"], draft["monthly_projections"], strict=True):
+                row.update(mrr_usd=original["mrr_usd"], revenue_usd=original["mrr_usd"])
+            candidate["arr_month_12_usd"] = draft["arr_month_12_usd"]
+            return candidate
+
+        execute_claim(self.database, claim, stale_provider)
+        final = self.database.snapshot("alice", run_id)
+        states = {step["step_id"]: step for step in final["steps"]}
+        self.assertEqual(final["status"], "partial")
+        self.assertEqual(states["financial_projections"]["error"]["code"], "invalid_output")
+        self.assertEqual(states["pitch_deck"]["error"]["code"], "dependency_blocked")
+        self.assertEqual(states["executive_summary"]["error"]["code"], "dependency_blocked")
+        self.assertEqual([a["artifact_id"] for a in final["artifacts"] if a["step_id"] == "financial_projections"],
+                         ["financial_projections"])
+
+    def test_reject_pricing_blocks_dependents_but_keeps_draft_history(self):
+        run = self.database.submit("alice", "reject-pricing", self.body, version=REVIEWED_VERSION,
+                                   graph_mode="fake", pricing_review=True)
+        run_id = run["run_id"]
+        execute_claim(self.database, self.database.claim())
+        review = self.database.snapshot("alice", run_id)["pending_review"]
+        path = f'/runs/{run_id}/reviews/{review["review_id"]}/decisions'
+        decision = dict(decision_id=str(uuid4()), decision="reject", artifact_ids=review["artifact_ids"])
+        self.assertEqual(self.client.post(path, headers=self.headers(), json=decision).status_code, 200)
+        execute_claim(self.database, self.database.claim())
+        final = self.database.snapshot("alice", run_id)
+        steps = {step["step_id"]: step for step in final["steps"]}
+        self.assertEqual(final["status"], "partial")
+        self.assertEqual(steps["pricing_strategy"]["error"]["code"], "review_rejected")
+        self.assertEqual(steps["financial_projections"]["status"], "skipped")
+        self.assertEqual(steps["pitch_deck"]["error"]["code"], "dependency_blocked")
+        self.assertEqual(steps["risk_register"]["status"], "succeeded")
+        self.assertEqual(self.database.artifact("alice", run_id, "financial_projections")["reference"]["revision"], 1)
+        exported = self.client.get(f"/runs/{run_id}/exports/markdown", headers=self.headers())
+        self.assertIn("Missing sections:", exported.text)
+        self.assertNotIn("paid_campuses_month_12", exported.text)
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_failed_domain_validation_is_published_and_optional_judge_has_shared_budget(self):
+        run = self.database.submit("alice", "evaluation-budget", self.body, version=REVIEWED_VERSION,
+                                   graph_mode="live", token_limit=1, llm_evaluation=True)
+
+        def provider(step, body, upstream):
+            result = demo_provider(step, body, upstream)
+            if step == "market_research":
+                result.update(tam_usd_billions=1, sam_usd_billions=2)
+            return result
+
+        with patch("backend.llm.client.AsyncGroq", lambda **_: FixtureGroq(api_key="synthetic")):
+            execute_claim(self.database, self.database.claim(), provider)
+        final = self.database.snapshot("alice", run["run_id"])
+        self.assertEqual(final["status"], "partial")
+        market = next(e for e in final["evaluations"] if e["step_id"] == "market_research")
+        self.assertEqual(market["outcome"], "failed")
+        self.assertIsNone(market["artifact_id"])
+        self.assertIn("TAM", market["reasons"][0])
+        problem = [e for e in final["evaluations"] if e["step_id"] == "problem_refined"]
+        self.assertEqual([e["method"] for e in problem], ["heuristic", "llm"])
+        self.assertEqual(problem[1]["outcome"], "not_evaluated")
+        self.assertIn("budget", problem[1]["reasons"][0])
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_provider_judge_records_metered_dimensions_and_rejects_malformed_scores(self):
+        scores = dict(task_completion=2, relevance=2, consistency=2, grounding=1, completeness=2)
+
+        class JudgeGroq(FixtureGroq):
+            async def complete(self, model, messages, **kwargs):
+                step = json.loads(messages[-1]["content"])["step"]
+                payload = scores if step == "problem_refined" else {**scores, "relevance": 5}
+                return SimpleNamespace(model=model, usage=SimpleNamespace(prompt_tokens=20, completion_tokens=10),
+                                       choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+        def provider(step, body, upstream):
+            return demo_provider(step, body, upstream) if step in {"problem_refined", "startup_idea"} else {}
+
+        run = self.database.submit("alice", "meter-judge", self.body, version=REVIEWED_VERSION,
+                                   graph_mode="live", llm_evaluation=True)
+        with patch("backend.llm.client.AsyncGroq", JudgeGroq):
+            execute_claim(self.database, self.database.claim(), provider)
+        final = self.database.snapshot("alice", run["run_id"])
+        judgments = {e["step_id"]: e for e in final["evaluations"] if e.get("method") == "llm"}
+        self.assertEqual(judgments["problem_refined"]["outcome"], "needs_review")
+        self.assertEqual(judgments["problem_refined"]["score"], .8)
+        self.assertEqual(judgments["startup_idea"]["outcome"], "not_evaluated")
+        self.assertEqual({artifact["artifact_id"] for artifact in final["artifacts"]}, {"problem_refined", "startup_idea"})
+        with self.database.connect() as connection:
+            charges = connection.execute("""SELECT purpose, charged_tokens, charged_cost_nanousd
+                FROM v1_llm_attempts WHERE run_id=%s""", (run["run_id"],)).fetchall()
+        self.assertEqual(len(charges), 2)
+        self.assertTrue(all(row["purpose"] == "evaluation" and row["charged_tokens"] == 30
+                            and row["charged_cost_nanousd"] > 0 for row in charges))
 
     def test_langgraph_structure_includes_16_agents_and_validated_joins(self):
         compiled = build_graph(lambda step, state: {})
@@ -1267,7 +1461,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         initial = response.json()
         run_id = initial["run_id"]
-        self.assertEqual(initial["manifest"]["version"], GRAPH_VERSION)
+        self.assertEqual(initial["manifest"]["version"], REVIEWED_VERSION)
         self.assertEqual([step["step_id"] for step in initial["manifest"]["steps"]], list(LIVE_STEPS))
         self.assertIsNone(self.database.claim(versions=FAKE_VERSIONS))
         independent_research = Barrier(2)
@@ -1286,7 +1480,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         with patch("backend.run_worker.worker.live_provider", fixture_provider), \
              patch("backend.run_worker.worker.call_with_deadline", observe_call), \
              patch.object(settings, "v1_step_concurrency", 2):
-            execute_claim(self.database, self.database.claim(versions=(GRAPH_VERSION,)))
+            execute_claim(self.database, self.database.claim(versions=(REVIEWED_VERSION,)))
         final = self.client.get(f"/runs/{run_id}", headers=self.headers()).json()
         self.assertEqual(final["status"], "succeeded")
         self.assertEqual(set(seen), set(LIVE_STEPS))

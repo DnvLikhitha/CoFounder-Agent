@@ -3,7 +3,8 @@ import { AuthClient } from '@supabase/auth-js'
 import { authConfig } from '../src/lib/auth-config.js'
 import { checkArtifact, checkSnapshot } from '../src/lib/run-state.js'
 
-const liveManifestVersions = ['startup-langgraph-v1', 'live-startup-v1']
+const reviewedVersion = 'startup-reviewed-v1'
+const liveManifestVersions = [reviewedVersion, 'startup-langgraph-v1', 'live-startup-v1']
 const expected = [
   'problem_refined', 'startup_idea', 'market_research', 'competitor_analysis', 'customer_personas',
   'product_design', 'mvp_roadmap', 'business_model', 'pricing_strategy', 'financial_projections',
@@ -70,8 +71,11 @@ async function verify() {
         const step = snapshot.steps.find(({ step_id }) => step_id === stepId)
         assert.equal(step?.status, 'succeeded', 'Agent did not succeed.')
         const references = snapshot.artifacts.filter(({ step_id }) => step_id === stepId)
-        assert.equal(references.length, 1, 'Expected one published artifact.')
-        const [reference] = references
+        if (snapshot.manifest.version !== reviewedVersion) {
+          assert.equal(references.length, 1, 'Expected one published artifact.')
+        }
+        const reference = references.at(-1)
+        assert.ok(reference, 'Expected a published artifact.')
         assert.equal(reference.kind, stepId, 'Unexpected artifact kind.')
         assert.equal(reference.quality, 'complete', 'The artifact is incomplete.')
         const { content } = checkArtifact(await get(`/artifacts/${encodeURIComponent(reference.artifact_id)}`), runId, reference)

@@ -1,13 +1,15 @@
 import { ArtifactContent } from './ArtifactContent.jsx'
-import { readEvidence } from './lib/artifact-details.js'
+import { readEvidence, webUrl } from './lib/artifact-details.js'
 import { useArtifact } from './lib/use-artifact.js'
 import { saveDownload } from './lib/exports.js'
 
-export function OutputSection({ artifacts, evaluations, client, runId, status, steps, activeId, onSelect }) {
+export function OutputSection({ artifacts, evaluations, client, runId, status, steps, activeId, onSelect, pricingReview }) {
   const order = new Map(steps.map((step, position) => [step.step_id, position]))
+  const superseded = new Set(artifacts.map((artifact) => artifact.supersedes_artifact_id).filter(Boolean))
   const available = [...artifacts].sort((a, b) =>
     (order.get(a.step_id) ?? steps.length) - (order.get(b.step_id) ?? steps.length)).map((artifact) => ({
-    id: artifact.artifact_id, label: artifact.title, artifact,
+    id: artifact.artifact_id, label: artifact.revision ? `${artifact.title} · Revision ${artifact.revision}` : artifact.title,
+    artifact,
   }))
   const unavailable = steps.flatMap((step) => step.artifact_kinds
     .filter((kind) => !artifacts.some((artifact) => artifact.step_id === step.step_id && artifact.kind === kind))
@@ -37,6 +39,10 @@ export function OutputSection({ artifacts, evaluations, client, runId, status, s
           </div>
           {active.artifact ? (
             <Artifact key={active.id} reference={active.artifact} client={client} runId={runId}
+              historical={superseded.has(active.id)}
+              staleInputs={active.artifact.input_artifact_ids?.some((id) => superseded.has(id))}
+              draftForecast={active.artifact.step_id === 'financial_projections' && pricingReview}
+              rejected={steps.some((step) => step.step_id === active.artifact.step_id && step.error?.code === 'review_rejected')}
               evaluations={evaluations.filter((item) => item.artifact_id === active.id)} />
           ) : <MissingArtifact entry={active} status={status} />}
         </>
@@ -88,7 +94,7 @@ const qualities = {
   fallback: 'Fallback output',
 }
 
-function Artifact({ reference, client, runId, evaluations }) {
+function Artifact({ reference, client, runId, evaluations, historical, staleInputs, draftForecast, rejected }) {
   const { result, retry } = useArtifact(client, runId, reference)
 
   return (
@@ -98,6 +104,10 @@ function Artifact({ reference, client, runId, evaluations }) {
         <span className={`status status-${reference.quality === 'complete' ? 'succeeded' : 'partial'}`}>{qualities[reference.quality]}</span>
       </div>
       <p className="muted artifact-revision">Artifact revision <code>{reference.artifact_id}</code></p>
+      {historical && <p className="notice">A newer revision is available.</p>}
+      {staleInputs && <p className="notice warning">This revision used earlier assumptions.</p>}
+      {draftForecast && <p className="notice warning">This forecast is a draft pending pricing approval.</p>}
+      {rejected && <p className="notice warning">The founder rejected the assumptions used in this output.</p>}
       {reference.quality === 'partial' && <p className="notice warning">This output is available with gaps.</p>}
       {reference.quality === 'fallback' && <p className="notice warning">This is a fallback output.</p>}
       {!result && <p className="muted" role="status">Loading artifact…</p>}
@@ -182,7 +192,13 @@ const outcomes = {
   failed: 'Failed',
   needs_review: 'Needs review',
   not_evaluated: 'Not evaluated',
+  not_applicable: 'Not applicable',
 }
+const dimensions = {
+  task_completion: 'Task completion', relevance: 'Relevance', consistency: 'Consistency',
+  grounding: 'Grounding', completeness: 'Completeness',
+}
+const relationships = { citation: 'Cited source', matched_value: 'Matching value', research_context: 'Research context' }
 const score = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 1 })
 
 function EvaluationList({ evaluations, empty, target }) {
@@ -192,14 +208,27 @@ function EvaluationList({ evaluations, empty, target }) {
       {evaluations.map((evaluation) => (
         <li key={evaluation.evaluation_id}>
           <div className="section-heading">
-            <strong>{evaluation.evaluator}</strong>
+            <strong>{evaluation.method === 'llm' ? 'Model judgment' : evaluation.method === 'heuristic'
+              ? 'Deterministic checks' : evaluation.evaluator}</strong>
             {evaluation.score == null ? <span>Score unavailable</span>
               : <strong className="score">{score.format(evaluation.score)}</strong>}
           </div>
           <p className="muted">{[target?.(evaluation), outcomes[evaluation.outcome], `Version ${evaluation.evaluator_version}`].filter(Boolean).join(' · ')}</p>
-          {evaluation.reasons.length > 0 && <ul className="reasons">{evaluation.reasons.map((reason, index) => (
+          {evaluation.dimensions?.length ? <dl className="reasons">{evaluation.dimensions.map((item) => (
+            <div key={item.dimension}>
+              <dt>{dimensions[item.dimension]} · {outcomes[item.outcome]}</dt>
+              <dd>{item.reason}</dd>
+            </div>
+          ))}</dl> : evaluation.reasons.length > 0 && <ul className="reasons">{evaluation.reasons.map((reason, index) => (
             <li key={index}>{reason}</li>
           ))}</ul>}
+          {evaluation.evidence?.length > 0 && <ul className="reasons">{evaluation.evidence.map((link) => {
+            const url = webUrl(link.source_url)
+            return <li key={JSON.stringify(link)}>
+              {relationships[link.relationship]} · <code>{link.claim_path}</code> · <code>{link.artifact_id}</code>
+              {url && <> · <a href={url} target="_blank" rel="noreferrer">View source</a></>}
+            </li>
+          })}</ul>}
         </li>
       ))}
     </ul>

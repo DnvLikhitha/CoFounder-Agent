@@ -16,35 +16,49 @@ class AttemptLedger:
     run_id: str
     token: str
     step_id: str
+    purpose: str = "generation"
+
+    def revision(self, snapshot):
+        published = sum(ref["step_id"] == self.step_id for ref in snapshot["artifacts"]
+                        if ref.get("revision") is not None)
+        if self.step_id == "financial_projections":
+            pricing = sum(ref["step_id"] == "pricing_strategy" for ref in snapshot["artifacts"]
+                          if ref.get("revision") is not None)
+            return max(published + 1, pricing)
+        return published + 1
 
     def history(self):
-        with self.store._claimed(self.run_id, self.token) as (connection, _):
+        with self.store._claimed(self.run_id, self.token) as (connection, snapshot):
             return connection.execute(
                 """SELECT status, requested_model,
                    GREATEST(0, COALESCE(EXTRACT(EPOCH FROM retry_at - clock_timestamp()), 0))::float AS wait
-                   FROM v1_llm_attempts WHERE run_id=%s AND step_id=%s ORDER BY attempt_no""",
-                (self.run_id, self.step_id)).fetchall()
+                   FROM v1_llm_attempts WHERE run_id=%s AND step_id=%s AND purpose=%s
+                     AND execution_revision=%s ORDER BY attempt_no""",
+                (self.run_id, self.step_id, self.purpose, self.revision(snapshot))).fetchall()
 
     def reserve(self, model, prompt, completion):
         cost = model.cost(prompt, completion)
         with self.store._claimed(self.run_id, self.token) as (connection, snapshot):
+            revision = self.revision(snapshot)
             limits = connection.execute(
                 "SELECT token_limit, cost_limit_nanousd FROM v1_runs WHERE run_id=%s", (self.run_id,)
             ).fetchone()
             totals = connection.execute(
                 """SELECT COALESCE(SUM(charged_tokens),0) AS tokens,
                    COALESCE(SUM(charged_cost_nanousd),0) AS cost,
-                   COUNT(*) FILTER (WHERE step_id=%s) AS attempts,
-                   COUNT(*) FILTER (WHERE step_id=%s AND claim_token=%s) AS claim_attempts
+                   COUNT(*) FILTER (WHERE step_id=%s AND purpose=%s AND execution_revision=%s) AS attempts,
+                   COUNT(*) FILTER (WHERE step_id=%s AND purpose=%s AND execution_revision=%s
+                                    AND claim_token=%s) AS claim_attempts
                    FROM v1_llm_attempts WHERE run_id=%s""",
-                (self.step_id, self.step_id, self.token, self.run_id)).fetchone()
+                (self.step_id, self.purpose, revision, self.step_id, self.purpose, revision,
+                 self.token, self.run_id)).fetchone()
             step = next(s for s in snapshot["steps"] if s["step_id"] == self.step_id)
             if step["status"] != "running" or totals["attempts"] >= MAX_ATTEMPTS:
                 raise ProviderFailure()
             if (limits["token_limit"] is None or totals["tokens"] + prompt + completion > limits["token_limit"]
                     or totals["cost"] + cost > limits["cost_limit_nanousd"]):
                 raise BudgetExceeded()
-            if totals["claim_attempts"]:
+            if totals["claim_attempts"] and self.purpose == "generation":
                 timestamp = connection.execute("SELECT clock_timestamp() AS time").fetchone()["time"].isoformat()
                 step["attempt"] += 1
                 self.store._emit(connection, snapshot, "step.updated", step, timestamp)
@@ -52,10 +66,10 @@ class AttemptLedger:
             connection.execute(
                 """INSERT INTO v1_llm_attempts (attempt_id, run_id, step_id, claim_token, attempt_no, step_attempt,
                    requested_model, status, reserved_prompt_tokens, reserved_completion_tokens, reserved_cost_nanousd,
-                   charged_tokens, charged_cost_nanousd)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,'reserved',%s,%s,%s,%s,%s)""",
+                   charged_tokens, charged_cost_nanousd, purpose, execution_revision)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,'reserved',%s,%s,%s,%s,%s,%s,%s)""",
                 (reservation, self.run_id, self.step_id, self.token, totals["attempts"] + 1, step["attempt"],
-                 model.name, prompt, completion, cost, prompt + completion, cost))
+                 model.name, prompt, completion, cost, prompt + completion, cost, self.purpose, revision))
             return reservation
 
     def settle(self, attempt_id, status, *, actual_model=None, usage=None, cost=None, retry_delay=None):

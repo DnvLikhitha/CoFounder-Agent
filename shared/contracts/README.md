@@ -7,9 +7,9 @@ This directory is the shared interface for the FastAPI backend and Vite React fr
 - `openapi.json` describes REST requests, responses, errors, query parameters, and downloads using OpenAPI 3.1.
 - `sse.schema.json` describes each SSE `data` envelope using JSON Schema 2020-12 and a discriminated event union.
 - `examples.json` contains start, history, artifact, review, and error payloads.
-- `fixtures/succeeded/` and `fixtures/partial/` each contain an initial `snapshot.json`, ordered `events.jsonl`, wire-format `events.sse`, expected `final.json`, and artifact response bodies in `artifacts.json`.
+- `fixtures/succeeded/`, `fixtures/partial/`, and `fixtures/revised/` each contain an initial `snapshot.json`, ordered `events.jsonl`, wire-format `events.sse`, expected `final.json`, and artifact response bodies in `artifacts.json`.
 
-JavaScript can load these JSON files directly. No generated TypeScript client is required. The two-step fixture manifests deliberately demonstrate a variable pipeline size. Each includes a review pause and approval. The partial fixture preserves completed research after summary generation fails.
+JavaScript can load these JSON files directly. The compact fixture manifests demonstrate variable pipeline size. The partial fixture preserves completed research after summary generation fails. The revised fixture demonstrates a replacement review, a new pricing revision, approval, and a recomputed forecast with explicit lineage.
 
 ## Retired legacy routes
 
@@ -35,7 +35,7 @@ The server returns 404 on these paths. The replacements are listed for clients m
 | `GET /api/v1/runs?limit=25&cursor=...` | 200 HistoryPage | History with opaque next_cursor |
 | `GET /api/v1/runs/{run_id}/artifacts` | 200 ArtifactList | Refresh artifact references |
 | `GET /api/v1/runs/{run_id}/artifacts/{artifact_id}` | 200 Artifact | Read output content |
-| `POST /api/v1/runs/{run_id}/reviews/{review_id}/decisions` | 200 ReviewReceipt | Approve or reject a pending review |
+| `POST /api/v1/runs/{run_id}/reviews/{review_id}/decisions` | 200 ReviewReceipt | Approve, reject, or revise a pending pricing review |
 | `GET /api/v1/runs/{run_id}/exports/{format}` | 200 attachment | Download pdf, markdown, or pptx |
 
 Run input requires `problem` (10–500 characters). `domain` and `geography` are optional nullable strings, each at most 100 characters. Snapshot fields supply all information required for rendering progress, results, evaluations, and the active review. Fields without schema defaults must be present, including nullable timestamps and errors. Empty collections use `[]`. All timestamps include an offset, with UTC recommended. IDs are opaque to clients. Event IDs are integers within JavaScript's safe integer range.
@@ -45,6 +45,8 @@ All run endpoints require `Authorization: Bearer <access-token>`. Production acc
 Submission accepts an optional `Idempotency-Key` header of 1–200 characters. Reuse it when retrying an uncertain submission. The same key and normalized request body for the same owner return the original 202 queued snapshot, even if the run has advanced. A conflicting body returns 409. Keys are scoped to the owner and retained for the life of the run. Each unkeyed submission creates a new run. Fetch the snapshot for current state.
 
 Artifact bodies have `run_id`, `reference`, and JSON-compatible `content`. JSON content may be an object, array, or scalar, preserving existing output shapes. For text media types, content is a JSON string. Artifact `kind` maps to domain output names such as `market_research` and `executive_summary`. Render unknown kinds with a generic viewer. Artifact IDs and content are immutable after publication. A replacement artifact receives a new ID. References use API-relative hrefs, resolved against the backend origin.
+
+Reviewed runs expose the entire revision history in `RunSnapshot.artifacts` and `ArtifactList`. Each reference can include a one-based `revision`, the immediate `supersedes_artifact_id`, and the exact `input_artifact_ids` consumed to create it. Revision fields are optional for older runs. Keep both versions when applying `artifact.created` and use exact artifact IDs in detail and review links. Exports use the current accepted artifacts and show missing sections when outputs were rejected or recomputation failed.
 
 ## Status and manifest decisions
 
@@ -58,13 +60,15 @@ Artifact bodies have `run_id`, `reference`, and JSON-compatible `content`. JSON 
 | failed | Terminal with no usable artifacts | Attempts exhausted with no usable output |
 | skipped | Unavailable for runs | Execution omitted due to dependency failure or policy |
 
-Run terminal states are succeeded, partial, and failed. Step terminal states additionally include skipped. Terminal runs emit no further events. Successful runs can omit optional steps. A failed optional step does not alone force a partial run. Required failure with usable output gives partial. Review rejection ends the run as partial if usable artifacts remain, otherwise failed, and marks remaining queued steps skipped. Approval resumes running. Retry attempts occur within running and increment `attempt`. Automatic retries of terminal runs and revision requests are deferred.
+Run terminal states are succeeded, partial, and failed. Step terminal states additionally include skipped. Terminal runs emit no further events. Successful runs can omit optional steps. Required failure with usable output gives partial. Pricing rejection lets independent work remain available while dependent work becomes blocked. Approval resumes running and can queue recomputation of previous outputs. Retry attempts occur within running and increment `attempt`.
 
 The server freezes a versioned manifest at run creation. Every step has a stable ID, display label, phase, display order, dependency IDs, required flag, and possible artifact kinds. Dependencies form an acyclic graph and reference existing steps. Snapshot `steps` contains exactly one state for every manifest entry. Array order is preserved by replay, while display sorting uses `order` then `step_id`. Clients derive counts and labels from the manifest. A changed pipeline produces a new manifest version for new runs.
 
-An evaluation records its evaluator and version, target step/artifact, outcome, optional normalized score, reasons, and timestamp. `not_evaluated` is explicit when no evaluation was performed. `needs_review` can lead to a ReviewRequest. Evaluation policy determines which checks are required. The run status remains authoritative for clients. Raw provider errors, prompts, tokens, credentials, and database internals are excluded from the public error message.
+An evaluation records its evaluator and version, target step or artifact, outcome, reasons, and timestamp. New records also identify the `heuristic` or `llm` method and report `task_completion`, `relevance`, `consistency`, `grounding`, and `completeness` with a reason for each. A normalized score is the fraction of applicable dimensions that passed. Evidence identifies an artifact and a JSON Pointer to a claim, with an optional source URL. Relationships distinguish `citation`, `matched_value`, and `research_context`, where context supplies research for the artifact as a whole. The evaluation outcome and the run status are independent. Schema or domain validation failures prevent artifact publication. `not_evaluated` covers historical placeholders or cases where the optional judge could not finish. Public errors contain sanitized messages.
 
-Only one review is pending per run. `decision_id` is a client-generated UUID retained across retries. Reposting the same decision ID and payload to the same review returns the original receipt and creates no duplicate event. Reusing the ID with different content or deciding an already resolved review with a new ID returns 409. The server commits the decision, receipt, and corresponding event atomically. Approval clears pending_review and resumes the run. Reviews have no expiry in the MVP.
+Only one review is pending per run. Pricing checkpoints carry `revision_kind: "pricing"`. For each action, POST a client-generated UUID in `decision_id`, the action in `decision`, the exact displayed `artifact_ids`, and optional `comment`. A `revise` decision also requires `pricing_revision` with the existing `tier_name` and changed nonnegative `price_monthly_usd` and `price_annual_usd`. The server atomically records the decision, publishes the new price revision and evaluation, and issues a fresh review ID while the run stays paused. Approve the fresh review to recompute the draft forecast and proceed with the investor outputs. `reject` preserves the revision history and blocks investor outputs that depend on accepted pricing. Final executive-summary reviews accept `approve` and `reject` and retain compatibility with clients that omit `artifact_ids`.
+
+Reposting the same decision ID and payload to the same review returns the original receipt and creates no duplicate event. An earlier review ID, stale artifact IDs, or changed payload for an existing receipt returns 409. Refresh the snapshot before presenting the next action. An unknown or foreign run returns 404. Invalid edits return 422. Reviews survive worker restarts and stay pending until a decision is recorded.
 
 ## Snapshot, replay, and reconnect
 
@@ -98,6 +102,6 @@ From the repository root, using the existing Python environment and pinned backe
 .\.venv\Scripts\python.exe -m backend.contracts.tool --check --check-runtime
 ```
 
-The first command regenerates OpenAPI, SSE JSON Schema, and wire-format SSE fixtures. The second validates fixtures, replays both scenarios at every reconnect boundary, rejects schema drift, and compares the mounted API's routes, parameters, authentication, and response schemas. It reads application settings to load the router and requires no credentials or running services with the default development configuration. Use `--check` alone for the settings-independent fixture and schema checks.
+The first command regenerates OpenAPI, SSE JSON Schema, and wire-format SSE fixtures. The second validates fixtures, replays all scenarios at every reconnect boundary, rejects schema drift, and compares the mounted API's routes, parameters, authentication, and response schemas. It reads application settings to load the router and runs with the default development configuration. Use `--check` alone for settings-independent fixture and schema checks.
 
 Changing a model requires regenerating schemas and updating affected fixtures. Breaking field, enum, or event changes require a new major API version. MVP request/response models reject extra fields, so even additive changes require an explicit version and consumer compatibility review.
