@@ -17,6 +17,7 @@ from backend.run_worker.workflow import ProviderFailure, ProviderTimeout
 class ProviderTests(IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.requests = []
+        self.request_urls = []
         self.replies = []
         self.ledger = Mock()
         self.ledger.history.return_value = []
@@ -25,6 +26,7 @@ class ProviderTests(IsolatedAsyncioTestCase):
         async def transport(request):
             args = json.loads(request.content)
             self.requests.append(args)
+            self.request_urls.append(str(request.url))
             reply = self.replies.pop(0)
             if reply == "hang":
                 await asyncio.Event().wait()
@@ -49,6 +51,7 @@ class ProviderTests(IsolatedAsyncioTestCase):
             self.assertEqual(await self.client.complete("private prompt"), "{}")
         wait.assert_awaited_once_with(2)
         self.assertEqual([req["model"] for req in self.requests], ["openai/gpt-oss-120b", "openai/gpt-oss-20b"])
+        self.assertEqual(self.request_urls, ["https://api.groq.com/openai/v1/chat/completions"] * 2)
         for request in self.requests:
             self.assertEqual(request["max_completion_tokens"], 4096)
             self.assertNotIn("max_tokens", request)
@@ -80,8 +83,12 @@ class ProviderTests(IsolatedAsyncioTestCase):
 
     async def test_model_unavailability_falls_back_but_bad_credentials_do_not_retry(self):
         self.replies = [(404, {}, "model_not_found"), (401, {}, "invalid_api_key")]
-        with patch("backend.llm.client.uniform", return_value=0), self.assertRaises(ProviderFailure):
+        with patch("backend.llm.client.uniform", return_value=0), \
+             self.assertLogs("backend.llm.client", level="WARNING") as captured, self.assertRaises(ProviderFailure):
             await self.client.complete("private prompt")
+        self.assertEqual(captured.output, [
+            "WARNING:backend.llm.client:Groq request stopped (HTTP 401, category rejected, code invalid_api_key)"
+        ])
         self.assertEqual([req["model"] for req in self.requests], ["openai/gpt-oss-120b", "openai/gpt-oss-20b"])
         self.assertEqual([call.args[1] for call in self.ledger.settle.call_args_list], ["model_unavailable", "rejected"])
 

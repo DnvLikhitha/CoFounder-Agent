@@ -1,7 +1,7 @@
 """
 export/markdown_writer.py — Generate comprehensive Markdown startup plan
 """
-from backend.agents.investor_metrics import investor_metrics
+from backend.agents.investor_metrics import format_metric, investor_metrics
 from backend.context import RunContext
 
 
@@ -199,7 +199,8 @@ async def generate_markdown(ctx: RunContext, *, notice="") -> str:
     lines.append(f"- **Backend:** {be.get('framework', '?')} ({be.get('language', '?')}) → {be.get('hosting', '?')}")
     lines.append(f"- **Database:** {db_info.get('primary', '?')}")
     lines.append(f"- **AI Layer:** {ai.get('primary_llm', '?')}")
-    lines.append(f"- **Infra Cost:** ${tech.get('estimated_monthly_infra_cost_usd', 0)}/month")
+    infra_cost = format_metric(tech.get("estimated_monthly_infra_cost_usd"), "${:,.2f}/month")
+    lines.append(f"- **Estimated Infra Cost:** {infra_cost}")
     lines.append("")
     if tech.get("architecture_description"):
         lines.append(tech.get("architecture_description", ""))

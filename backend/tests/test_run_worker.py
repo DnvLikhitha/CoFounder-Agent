@@ -1515,12 +1515,17 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertIn("CREATE TABLE verified_roles", markdown.text)
         self.assertIn("A Verified Internship Gap", markdown.text)
         self.assertIn("https://example.org/audit-source", markdown.text)
+        self.assertIn("**Estimated Infra Cost:** Unavailable", markdown.text)
         self.assertNotIn("Fake-provider demonstration", markdown.text)
         with patch.object(rl_config, "pageCompression", 0):
             pdf = self.client.get(f"{exports}/pdf", headers=self.headers())
         self.assertEqual(pdf.status_code, 200)
         self.assertIn(b"Campus Bridge connects busy students", pdf.content)
         self.assertIn(b"Campus Pilot", pdf.content)
+        for expected in (b"Customer Personas", b"Product Design", b"MVP Roadmap", b"Business Model",
+                         b"Technical Architecture", b"CREATE TABLE verified_roles", b"Security and Compliance",
+                         b"A Verified Internship Gap"):
+            self.assertIn(expected, pdf.content)
         pptx = self.client.get(f"{exports}/pptx", headers=self.headers())
         self.assertEqual(pptx.status_code, 200)
         deck = Presentation(BytesIO(pptx.content))

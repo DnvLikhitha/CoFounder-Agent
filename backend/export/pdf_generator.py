@@ -11,10 +11,9 @@ from reportlab.lib.units import inch
 from reportlab.lib.colors import HexColor, white, black
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    HRFlowable, PageBreak
+    HRFlowable, PageBreak, Preformatted
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from reportlab.platypus import KeepTogether
 
 
 # Brand Colors
@@ -66,6 +65,16 @@ def create_styles():
         textColor=SUCCESS, spaceAfter=8
     ))
     return styles
+
+
+def add_section(story, styles, title, entries):
+    if not entries:
+        return
+    story.append(Paragraph(title, styles["SectionHeader"]))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=ACCENT, spaceAfter=10))
+    for entry in entries:
+        story.append(Paragraph(escape(entry), styles["BodyText2"]))
+    story.append(Spacer(1, 0.15 * inch))
 
 
 async def generate_pdf(ctx: RunContext, *, notice="") -> bytes:
@@ -305,13 +314,46 @@ async def generate_pdf(ctx: RunContext, *, notice="") -> bytes:
         ]))
         story.append(comp_table)
         story.append(Spacer(1, 0.2*inch))
-
         market_gaps = comp.get("market_gaps", [])
         if market_gaps:
             story.append(Paragraph("Our Opportunities:", styles["BodyText2"]))
             for gap in market_gaps:
                 story.append(Paragraph(f"• {escape(str(gap))}", styles["BulletItem"]))
         story.append(Spacer(1, 0.2*inch))
+
+    add_section(story, styles, "Customer Personas", [
+        f"{item['name']} ({item['job_title']}). {' / '.join(item['pain_points'])}" for item in personas
+    ])
+    add_section(story, styles, "Product Design", [
+        f"{item['feature']} — {item['description']}" for item in product.get("must_have_features", [])
+    ] + [
+        f"{item['flow_name']}: {' → '.join(item['steps'])}" for item in product.get("core_ux_flows", [])
+    ])
+    add_section(story, styles, "MVP Roadmap", [
+        f"Sprint {item['sprint_number']} ({item['duration_weeks']} weeks). {item['sprint_goal']} Deliverable: {item['deliverable']}"
+        for item in ctx.mvp_roadmap.get("sprints", [])
+    ])
+    add_section(story, styles, "Business Model", [
+        f"{item['stream']} ({item['model']}). {item['description']}" for item in biz.get("revenue_streams", [])
+    ] + [
+        f"{item['phase']} — {item['strategy']} Target: {item['target']}" for item in biz.get("gtm_phases", [])
+    ])
+    architecture = ctx.tech_architecture
+    if architecture:
+        add_section(story, styles, "Technical Architecture", [architecture["architecture_description"],
+                    f"Frontend: {architecture['frontend_stack']['framework']}. Backend: {architecture['backend_stack']['framework']}."])
+    schema = ctx.database_schema
+    if schema:
+        add_section(story, styles, "Database Schema", [
+            f"{item['entity']} — {item['purpose']}" for item in schema["entities"]
+        ])
+        sql_style = ParagraphStyle("SchemaSQL", parent=styles["BodyText2"], fontName="Courier", fontSize=8)
+        story.append(Preformatted(schema["sql_schema"], sql_style, maxLineLength=90))
+    add_section(story, styles, "Security and Compliance", ctx.security_compliance.get("security_launch_checklist", []))
+    add_section(story, styles, "Pitch Deck", [
+        f"Slide {item['slide_number']}: {item['title']} — {item['headline']}"
+        for item in ctx.pitch_deck.get("slides", []) if "slide_number" in item
+    ])
 
     # ── Footer note ──────────────────────────────────────────────────────
     story.append(HRFlowable(width="100%", thickness=0.5, color=MUTED, spaceBefore=20, spaceAfter=10))
