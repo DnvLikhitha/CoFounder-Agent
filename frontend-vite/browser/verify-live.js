@@ -3,6 +3,7 @@ import { AuthClient } from '@supabase/auth-js'
 import { authConfig } from '../src/lib/auth-config.js'
 import { checkArtifact, checkSnapshot } from '../src/lib/run-state.js'
 
+const liveManifestVersions = ['startup-langgraph-v1', 'live-startup-v1']
 const expected = [
   'problem_refined', 'startup_idea', 'market_research', 'competitor_analysis', 'customer_personas',
   'product_design', 'mvp_roadmap', 'business_model', 'pricing_strategy', 'financial_projections',
@@ -61,7 +62,7 @@ async function verify() {
 
   try {
     const snapshot = checkSnapshot(await get(), runId)
-    assert.equal(snapshot.manifest.version, 'startup-langgraph-v1', 'Run uses a different workflow manifest.')
+    assert.ok(liveManifestVersions.includes(snapshot.manifest.version), 'Run uses an unsupported live workflow manifest.')
     assert.equal(snapshot.manifest.steps.length, expected.length, 'Unexpected agent count.')
     const failures = []
     for (const stepId of expected) {
