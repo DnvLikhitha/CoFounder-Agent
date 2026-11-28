@@ -18,8 +18,10 @@ import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi.testclient import TestClient
-from jose import jwt
+import httpx
+import jwt
 import psycopg
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
@@ -28,7 +30,11 @@ from psycopg.types.json import Jsonb
 from backend.config import settings
 from backend.contracts.tool import replay
 from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot
+from backend.llm.profiles import PROFILES, PROFILE_VERSION, PROMPT_VERSION
 from backend.run_worker.api import app, store
+from backend.run_worker.auth import supabase_keys
+from backend.run_worker.ledger import AttemptLedger, BudgetExceeded
+from backend.run_worker.live_agents import PROMPT_BUNDLES
 from backend.run_worker.provider_call import call_with_deadline
 from backend.run_worker import workflow
 from backend.run_worker.store import LostClaim, Store, StoreError
@@ -80,7 +86,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         cls.schema = "worker_test_" + uuid4().hex
         with psycopg.connect(cls.base_dsn) as connection:
             connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(cls.schema)))
-        cls.dsn = make_conninfo(cls.base_dsn, options=f"-csearch_path={cls.schema}")
+        cls.dsn = make_conninfo(cls.base_dsn, options=f"-csearch_path={cls.schema} -cTimeZone=UTC")
         cls.database = Store(cls.dsn)
         cls.database.migrate()
         cls.database.migrate()
@@ -109,7 +115,8 @@ class WorkerIntegrationTests(unittest.TestCase):
 
     def setUp(self):
         with self.database.connect() as connection:
-            connection.execute("TRUNCATE v1_events, v1_artifacts, v1_runs")
+            connection.execute("TRUNCATE v1_events, v1_artifacts, v1_llm_attempts, v1_review_decisions, "
+                               "v1_worker_heartbeats, v1_runs")
         self.body = {"problem": "Help students find useful internships.", "domain": None, "geography": None}
 
     def headers(self, subject="alice", **claims):
@@ -136,6 +143,240 @@ class WorkerIntegrationTests(unittest.TestCase):
             self.database.submit("alice", "submission-1", {**self.body, "domain": "changed"})
         self.assertEqual(failure.exception.status, 409)
         self.assertNotEqual(self.submit("bob")["run_id"], snapshots[0]["run_id"])
+
+    def test_submission_contract_with_and_without_idempotency_key(self):
+        headers = {**self.headers(), "Idempotency-Key": "browser-submission"}
+        first = self.client.post("/runs", json={"problem": self.body["problem"]}, headers=headers)
+        self.assertEqual(first.status_code, 202)
+        duplicate = self.client.post("/runs", json=self.body, headers=headers)
+        self.assertEqual(duplicate.json(), first.json())
+        conflict = self.client.post("/runs", json={**self.body, "domain": "different"}, headers=headers)
+        self.assertEqual(conflict.status_code, 409)
+        unkeyed = [self.client.post("/runs", json=self.body, headers=self.headers()).json()["run_id"] for _ in range(2)]
+        self.assertEqual(len(set(unkeyed + [first.json()["run_id"]])), 3)
+
+    def test_run_budget_serializes_concurrent_reservations_and_retains_crash_charge(self):
+        model = PROFILES[PROFILE_VERSION][0]
+        fixtures = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        for token_limit, cost_limit in [(100, 1_000_000), (10_000, model.cost(50, 50))]:
+            with self.subTest(token_limit=token_limit, cost_limit=cost_limit):
+                run = self.database.submit("alice", str(uuid4()), self.body, version=LIVE_VERSION,
+                                           token_limit=token_limit, cost_limit=cost_limit)
+                claim = self.database.claim()
+                self.assertEqual(claim[0], run["run_id"])
+                self.assertEqual(self.database.live_configuration(*claim),
+                                 {"model_profile": PROFILE_VERSION, "prompt_version": PROMPT_VERSION})
+                for step in ("problem_refined", "startup_idea"):
+                    self.database.begin_step(*claim, step)
+                    self.database.complete_step(*claim, step, fixtures[step])
+                steps = ("market_research", "competitor_analysis")
+                for step in steps:
+                    self.database.begin_step(*claim, step)
+                barrier = Barrier(2)
+
+                def reserve(step):
+                    ledger = AttemptLedger(Store(self.dsn), *claim, step)
+                    barrier.wait(5)
+                    try:
+                        return step, ledger.reserve(model, 50, 50)
+                    except BudgetExceeded:
+                        return step, None
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    reservations = dict(executor.map(reserve, steps))
+                self.assertEqual(sum(attempt is not None for attempt in reservations.values()), 1)
+                step, reservation = next((s, a) for s, a in reservations.items() if a)
+                self.expire(run["run_id"])
+                restarted = Store(self.dsn)
+                replacement = restarted.claim()
+                old = AttemptLedger(self.database, *claim, step)
+                with self.assertRaises(LostClaim):
+                    old.settle(reservation, "succeeded", actual_model=model.name, usage=(2, 3), cost=model.cost(2, 3))
+                restarted.begin_step(*replacement, step)
+                ledger = AttemptLedger(restarted, *replacement, step)
+                self.assertEqual(ledger.history()[0]["status"], "unknown")
+                with self.assertRaises(BudgetExceeded):
+                    ledger.reserve(model, 50, 50)
+                with restarted.connect() as connection:
+                    row = connection.execute(
+                        "SELECT charged_tokens, charged_cost_nanousd FROM v1_llm_attempts WHERE attempt_id=%s",
+                        (reservation,)).fetchone()
+                    self.assertEqual(row, {"charged_tokens": 100, "charged_cost_nanousd": model.cost(50, 50)})
+
+    def test_reported_usage_releases_headroom_and_attempt_cap_survives_reclaim(self):
+        model = PROFILES[PROFILE_VERSION][0]
+        run_id = self.database.submit("alice", "usage", self.body, version=LIVE_VERSION,
+                                      token_limit=100, cost_limit=100_000)["run_id"]
+        claim = self.database.claim()
+        step = "problem_refined"
+        self.database.begin_step(*claim, step)
+        ledger = AttemptLedger(self.database, *claim, step)
+        for _ in range(2):
+            attempt = ledger.reserve(model, 50, 40)
+            ledger.settle(attempt, "rate_limited", usage=(0, 0), cost=0, retry_delay=1)
+        attempt = ledger.reserve(model, 50, 40)
+        ledger.settle(attempt, "succeeded", actual_model=model.name, usage=(10, 4), cost=model.cost(10, 4))
+        self.expire(run_id)
+        restarted = Store(self.dsn)
+        replacement = restarted.claim()
+        restarted.begin_step(*replacement, step)
+        resumed = AttemptLedger(restarted, *replacement, step)
+        self.assertEqual([a["status"] for a in resumed.history()], ["rate_limited", "rate_limited", "succeeded"])
+        with self.assertRaises(ProviderFailure):
+            resumed.reserve(model, 1, 1)
+
+    def test_migration_backfills_unfinished_live_runs_and_enables_rls(self):
+        run_id = self.database.submit("alice", "pre-ledger", self.body, version=LIVE_VERSION)["run_id"]
+        with self.database.connect() as connection:
+            connection.execute("""UPDATE v1_runs SET model_profile=NULL, prompt_version=NULL,
+                                  token_limit=NULL, cost_limit_nanousd=NULL WHERE run_id=%s""", (run_id,))
+        self.database.migrate()
+        claim = self.database.claim()
+        self.assertEqual(self.database.live_configuration(*claim),
+                         {"model_profile": PROFILE_VERSION, "prompt_version": PROMPT_VERSION})
+        with self.database.connect() as connection:
+            limits = connection.execute(
+                "SELECT token_limit, cost_limit_nanousd FROM v1_runs WHERE run_id=%s", (run_id,)
+            ).fetchone()
+            self.assertEqual(limits, {"token_limit": 500_000, "cost_limit_nanousd": 250_000_000})
+            secured = connection.execute(
+                """SELECT count(*) AS n FROM pg_class
+                   WHERE relnamespace=current_schema()::regnamespace AND relname LIKE 'v1\_%' AND relrowsecurity"""
+            ).fetchone()
+            self.assertEqual(secured["n"], 6)
+
+    def test_supabase_rotation_claim_validation_and_owner_scope(self):
+        es = ec.generate_private_key(ec.SECP256R1())
+        rs = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        jwks = [dict(jwt.algorithms.ECAlgorithm.to_jwk(es.public_key(), as_dict=True), kid="es", alg="ES256"),
+                dict(jwt.algorithms.RSAAlgorithm.to_jwk(rs.public_key(), as_dict=True), kid="rs", alg="RS256")]
+        project = "https://test-project.supabase.co"
+        issuer = project + "/auth/v1"
+        subject = str(uuid4())
+        signed_claims = dict(sub=subject, iat=int(time.time() - 1), exp=int(time.time() + 120),
+                             iss=issuer, aud="authenticated", role="authenticated", session_id=str(uuid4()))
+
+        def headers(key=es, alg="ES256", kid="es", **changes):
+            token = jwt.encode({**signed_claims, **changes}, key, algorithm=alg, headers={"kid": kid})
+            return {"Authorization": "Bearer " + token}
+
+        active = jwks[:1]
+        def load(url, **kwargs):
+            self.assertEqual(url, issuer + "/.well-known/jwks.json")
+            self.assertFalse(kwargs["follow_redirects"])
+            return httpx.Response(200, json={"keys": active}, request=httpx.Request("GET", url))
+
+        with patch.multiple(settings, environment="production", supabase_url=project, v1_provider_mode="live",
+                            groq_api_key="synthetic"), patch("backend.run_worker.auth.httpx.get", side_effect=load):
+            self.addCleanup(supabase_keys.cache_clear)
+            first = self.client.post("/runs", headers=headers(), json=self.body)
+            self.assertEqual(first.status_code, 202)
+            run = f'/runs/{first.json()["run_id"]}'
+            self.assertEqual(self.client.get(run, headers=headers()).status_code, 200)
+            self.assertEqual(self.client.get(run, headers=headers(sub=str(uuid4()))).status_code, 404)
+            self.assertEqual(self.client.get("/runs", headers=headers(sub=str(uuid4()))).json()["runs"], [])
+            for changes in (dict(role="service_role"), dict(aud="anon"), dict(iss="https://wrong.invalid/auth/v1"),
+                            dict(exp=1), dict(is_anonymous=True), dict(session_id="missing")):
+                response = self.client.get(run, headers=headers(**changes))
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
+            self.assertEqual(self.client.get(run, headers=self.headers(subject)).status_code, 401)
+            active[:] = jwks[1:]
+            supabase_keys(issuer).refresh_after = 0
+            self.assertEqual(self.client.get(run, headers=headers(rs, "RS256", "rs")).status_code, 200)
+            self.assertEqual(self.client.get(run, headers=headers()).status_code, 401)
+
+    def test_readiness_requires_migration_and_recent_worker(self):
+        from backend.main import app as main_app
+
+        with TestClient(main_app) as client, patch.object(settings, "database_url", self.dsn):
+            self.assertEqual(client.get("/health").json(), {"status": "healthy"})
+            self.assertEqual(client.get("/ready").status_code, 503)
+            self.database.heartbeat("fake")
+            self.assertEqual(client.get("/ready").json(), {"status": "ready"})
+            with self.database.connect() as connection:
+                connection.execute("UPDATE v1_worker_heartbeats SET seen_at=clock_timestamp()-interval '1 minute'")
+            self.assertEqual(client.get("/ready").status_code, 503)
+            with patch.object(Store, "ready", side_effect=psycopg.errors.UndefinedTable("sensitive database detail")):
+                unavailable = client.get("/ready")
+            self.assertEqual(unavailable.status_code, 503)
+            self.assertEqual(unavailable.json(), {"status": "unready"})
+
+    def test_production_cors_and_redacted_unexpected_errors(self):
+        from backend.main import create_app
+
+        with patch.multiple(settings, environment="production", cors_origins="https://ui.example.com",
+                            supabase_url="https://test-project.supabase.co", v1_provider_mode="live",
+                            groq_api_key="synthetic", database_url=self.dsn):
+            with TestClient(create_app()) as client:
+                headers = {"Origin": "https://ui.example.com", "Access-Control-Request-Method": "POST",
+                           "Access-Control-Request-Headers": "authorization,idempotency-key,last-event-id"}
+                allowed = client.options("/api/v1/runs", headers=headers)
+                self.assertEqual(allowed.headers["access-control-allow-origin"], headers["Origin"])
+                self.assertNotIn("access-control-allow-credentials", allowed.headers)
+                denied = client.options("/api/v1/runs", headers={**headers, "Origin": "https://evil.example.com"})
+                self.assertNotIn("access-control-allow-origin", denied.headers)
+                denied_method = client.options("/api/v1/runs", headers={**headers, "Access-Control-Request-Method": "DELETE"})
+                self.assertEqual(denied_method.status_code, 400)
+                no_token = client.get("/api/v1/runs", params={"access_token": "secret"})
+                self.assertEqual(no_token.status_code, 401)
+                self.assertEqual(no_token.headers["Cache-Control"], "private, no-store")
+                with patch.object(Store, "ready", side_effect=RuntimeError("credentials=secret")), self.assertLogs() as logs:
+                    response = client.get("/ready?private=secret")
+                self.assertEqual(response.status_code, 500)
+                self.assertNotIn("secret", response.text + "".join(logs.output))
+
+            for value in ("*", "http://ui.example.com", "https://ui.example.com/path", "https://user:secret@ui.example.com"):
+                with patch.object(settings, "cors_origins", value), self.assertRaises(ValueError):
+                    create_app()
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_live_review_is_pinned_owner_scoped_and_recovers_without_reexecution(self):
+        outputs = json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+        def provider(step_id, body, upstream):
+            if step_id == "pitch_deck":
+                return {"slides": outputs[step_id]}
+            return outputs[step_id]["personas"] if step_id == "customer_personas" else outputs[step_id]
+
+        for verdict, expected in (("approve", "succeeded"), ("reject", "partial")):
+            with patch.multiple(settings, v1_provider_mode="live", groq_api_key="synthetic", v1_require_founder_review=True):
+                initial = self.client.post("/runs", headers=self.headers(), json=self.body).json()
+            run_id = initial["run_id"]
+            execute_claim(self.database, self.database.claim(), provider)
+            paused = self.database.snapshot("alice", run_id)
+            self.assertEqual(paused["status"], "awaiting_review")
+            self.assertIsNone(self.database.claim())
+            review = paused["pending_review"]
+            self.assertEqual(review["artifact_ids"], ["executive_summary"])
+            self.assertEqual(len(paused["artifacts"]), 16)
+            path = f'/runs/{run_id}/reviews/{review["review_id"]}/decisions'
+            body = {"decision_id": str(uuid4()), "decision": verdict}
+            self.assertEqual(self.client.post(path, headers=self.headers("bob"), json=body).status_code, 404)
+            receipt = self.client.post(path, headers=self.headers(), json=body)
+            self.assertEqual(receipt.status_code, 200)
+            self.assertEqual(self.client.post(path, headers=self.headers(), json=body).json(), receipt.json())
+            self.assertEqual(self.client.post(path, headers=self.headers(), json={**body, "comment": "changed"}).status_code, 409)
+            if verdict == "approve":
+                restarted = Store(self.dsn)
+                execute_claim(restarted, restarted.claim(), Mock(side_effect=AssertionError("Agents already completed")))
+            final = self.client.get(f"/runs/{run_id}", headers=self.headers()).json()
+            self.assertEqual(final["status"], expected)
+            stream = self.client.get(f"/runs/{run_id}/events", headers=self.headers())
+            events = [json.loads(line[6:]) for line in stream.text.splitlines() if line.startswith("data: ")]
+            decision = next(event["data"] for event in events if event["type"] == "review.decided")
+            self.assertEqual(decision, receipt.json())
+            self.assertEqual(replay(initial, events), final)
+
+    def test_live_worker_marks_budget_failure_before_dispatch(self):
+        initial = self.database.submit("alice", "tiny", self.body, version=LIVE_VERSION, token_limit=1)
+        with patch("backend.run_worker.worker.live_provider", fixture_provider):
+            execute_claim(self.database, self.database.claim())
+        final = self.database.snapshot("alice", initial["run_id"])
+        self.assertEqual(final["status"], "failed")
+        self.assertEqual(final["error"]["code"], "budget_exceeded")
+        with self.database.connect() as connection:
+            self.assertEqual(connection.execute("SELECT count(*) AS n FROM v1_llm_attempts").fetchone()["n"], 0)
 
     @patch("backend.run_worker.worker.call_with_deadline", inline_call)
     def test_claim_exclusion_reclaim_and_restart(self):
@@ -333,6 +574,8 @@ class WorkerIntegrationTests(unittest.TestCase):
         response = self.client.get(f"/runs/{run_id}/events", headers=self.headers())
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.headers["content-type"].startswith("text/event-stream"))
+        persisted = self.database.events("alice", run_id, 0)
+        self.assertTrue(persisted[-1]["occurred_at"].endswith("+00:00"))
         events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
         for event in events:
             EVENT_ADAPTER.validate_python(event)
@@ -547,7 +790,8 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(self.database.snapshot("alice", future["run_id"]), future)
 
     def test_stream_follows_events_committed_after_subscription(self):
-        initial = self.submit()
+        initial = self.client.post("/runs", headers=self.headers(), json=self.body).json()
+        path = f'/runs/{initial["run_id"]}'
         subscribed = Event()
         streaming_store = Store(self.dsn)
         original_events = streaming_store.events
@@ -558,12 +802,12 @@ class WorkerIntegrationTests(unittest.TestCase):
         app.dependency_overrides[store] = lambda: streaming_store
         try:
             with ThreadPoolExecutor(max_workers=1) as pool, patch.object(streaming_store, "events", side_effect=read_events):
-                stream = pool.submit(self.client.get, f'/runs/{initial["run_id"]}/events', headers=self.headers())
+                stream = pool.submit(self.client.get, f"{path}/events", headers=self.headers())
                 self.assertTrue(subscribed.wait(5))
                 execute_claim(self.database, self.database.claim())
                 response = stream.result(timeout=10)
             events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
-            self.assertEqual(replay(initial, events), self.database.snapshot("alice", initial["run_id"]))
+            self.assertEqual(replay(initial, events), self.client.get(path, headers=self.headers()).json())
         finally:
             app.dependency_overrides[store] = lambda: Store(self.dsn)
 
@@ -607,7 +851,8 @@ class WorkerIntegrationTests(unittest.TestCase):
             self.assertEqual(self.client.get(path).status_code, 401)
         for claims in [dict(exp=1), dict(aud="wrong"), dict(iss="wrong")]:
             self.assertEqual(self.client.get(paths[0], headers=self.headers(**claims)).status_code, 401)
-        forged = {"Authorization": "Bearer " + jwt.encode(dict(sub="alice", exp=time.time()+60), "wrong", algorithm="HS256")}
+        forged = {"Authorization": "Bearer " + jwt.encode(dict(sub="alice", exp=int(time.time()+60)),
+                                                          secrets.token_hex(32), algorithm="HS256")}
         self.assertEqual(self.client.get(paths[0], headers=forged).status_code, 401)
         with patch.object(settings, "v1_jwt_secret", ""):
             self.assertEqual(self.client.get(paths[0], headers=self.headers()).status_code, 503)
@@ -675,7 +920,7 @@ class WorkerIntegrationTests(unittest.TestCase):
                 self.assertIn("Missing sections: Pricing Strategy", slide_text)
                 self.assertIn("Business model: subscription", slide_text)
 
-    def test_exports_and_legacy_routes_registered(self):
+    def test_exports_and_legacy_routes_disabled(self):
         run_id = self.submit()["run_id"]
         self.assertEqual(self.client.get(f"/runs/{run_id}/exports/pdf", headers=self.headers()).status_code, 409)
         execute_claim(self.database, self.database.claim())
@@ -685,9 +930,13 @@ class WorkerIntegrationTests(unittest.TestCase):
             self.assertTrue(response.content.startswith(prefix))
             self.assertIn("attachment", response.headers["content-disposition"])
         from backend.main import app as main_app
-        paths = {route.path for route in main_app.routes}
-        self.assertTrue({"/api/run", "/api/runs", "/api/run/{run_id}/stream", "/api/v1"} <= paths)
         client = TestClient(main_app)
+        legacy = [("POST", "/api/run"), ("GET", "/api/runs"), ("GET", f"/api/run/{run_id}"),
+                  ("GET", f"/api/run/{run_id}/result"), ("GET", f"/api/run/{run_id}/stream"),
+                  ("GET", f"/api/run/{run_id}/export/markdown"), ("DELETE", f"/api/run/{run_id}")]
+        for method, path in legacy:
+            self.assertEqual(client.request(method, path).status_code, 404, path)
+            self.assertEqual(client.request(method, path, headers=self.headers()).status_code, 404, path)
         response = client.get(f"/api/v1/runs/{run_id}", headers=self.headers())
         self.assertEqual(response.status_code, 200)
         client.close()
@@ -698,6 +947,56 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("GROQ_API_KEY", response.json()["error"]["message"])
         self.assertIsNone(self.database.claim())
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_older_pinned_runs_complete_after_new_prompt_default(self):
+        claim_options = dict(versions=(LIVE_VERSION,), prompt_versions=PROMPT_BUNDLES, model_profiles=PROFILES)
+        model = PROFILES[PROFILE_VERSION][0]
+        step = "problem_refined"
+        for prior in (None, "reserved", "succeeded"):
+            with self.subTest(prior=prior):
+                initial = self.database.submit("alice", f"older-{prior}", self.body, version=LIVE_VERSION)
+                run_id = initial["run_id"]
+                if prior:
+                    claim = self.database.claim(**claim_options)
+                    self.database.begin_step(*claim, step)
+                    ledger = AttemptLedger(self.database, *claim, step)
+                    attempt = ledger.reserve(model, 200, 100)
+                    if prior == "succeeded":
+                        ledger.settle(attempt, prior, actual_model=model.name, usage=(200, 100),
+                                      cost=model.cost(200, 100))
+                    self.expire(run_id)
+
+                with patch("backend.run_worker.store.PROMPT_VERSION", "startup-prompts-v2"), \
+                     patch("backend.run_worker.live_agents.PROMPT_VERSION", "startup-prompts-v2"), \
+                     patch("backend.run_worker.worker.live_provider", fixture_provider), \
+                     patch.object(settings, "v1_step_concurrency", 1):
+                    newer = self.database.submit("alice", "new-prompt-default", self.body, version=LIVE_VERSION)
+                    restarted = Store(self.dsn)
+                    replacement = restarted.claim(**claim_options)
+                    self.assertEqual(replacement[0], run_id)
+                    self.assertEqual(restarted.live_configuration(*replacement)["prompt_version"], PROMPT_VERSION)
+                    if prior:
+                        history = AttemptLedger(restarted, *replacement, step).history()
+                        self.assertEqual(history[0]["wait"], 0)
+                    execute_claim(restarted, replacement)
+                    self.assertIsNone(restarted.claim(**claim_options))
+
+                final = restarted.snapshot("alice", run_id)
+                self.assertEqual(final["status"], "succeeded")
+                self.assertEqual(len(final["artifacts"]), 16)
+                self.assertEqual(replay(initial, restarted.events("alice", run_id, 0)), final)
+                self.assertEqual(restarted.snapshot("alice", newer["run_id"])["status"], "queued")
+                with restarted.connect() as connection:
+                    attempts = connection.execute(
+                        """SELECT status, charged_tokens FROM v1_llm_attempts
+                           WHERE run_id=%s AND step_id=%s ORDER BY attempt_no""", (run_id, step)
+                    ).fetchall()
+                expected = [{"status": "succeeded", "charged_tokens": 400}]
+                if prior:
+                    previous = "unknown" if prior == "reserved" else prior
+                    expected.insert(0, {"status": previous, "charged_tokens": 300})
+                self.assertEqual(attempts, expected)
 
     def test_all_live_agents_publish_committed_artifacts_and_export_real_content(self):
         from io import BytesIO
@@ -733,6 +1032,14 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(final["status"], "succeeded")
         self.assertEqual(set(seen), set(LIVE_STEPS))
         self.assertEqual(len(final["artifacts"]), 16)
+        with self.database.connect() as connection:
+            usage = connection.execute(
+                """SELECT count(*) AS attempts, count(DISTINCT step_id) AS steps,
+                   SUM(charged_tokens) AS tokens, SUM(charged_cost_nanousd) AS cost,
+                   array_agg(DISTINCT actual_model) AS models FROM v1_llm_attempts WHERE run_id=%s""", (run_id,)
+            ).fetchone()
+        self.assertEqual(usage, {"attempts": 16, "steps": 16, "tokens": 6400, "cost": 1_680_000,
+                                 "models": ["openai/gpt-oss-120b"]})
         self.assertEqual({artifact["kind"] for artifact in final["artifacts"]}, set(LIVE_STEPS))
         market_path = f"/runs/{run_id}/artifacts/market_research"
         market = self.client.get(market_path, headers=self.headers()).json()["content"]

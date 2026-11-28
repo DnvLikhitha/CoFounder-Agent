@@ -1,51 +1,32 @@
 """Mounted v1 API with authenticated, owner-scoped database reads."""
 import asyncio
-from dataclasses import dataclass
 from datetime import datetime
 import json
 import time
 from typing import Annotated, Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 import psycopg
 from starlette.concurrency import run_in_threadpool
 
 from backend.config import settings
 from backend.context import RunContext
-from backend.contracts.v1 import Artifact, ArtifactList, EventId, HistoryPage, Identifier, RunInput, RunSnapshot
-from backend.run_worker.live_agents import apply_artifact
+from backend.contracts.rest import EVENT_RESPONSES, EXPORT_RESPONSES, HistoryCursor, IdempotencyKey, error_responses
+from backend.contracts.v1 import (
+    Artifact, ArtifactList, EVENT_ADAPTER, EventId, HistoryPage, Identifier, ReviewDecision, ReviewReceipt,
+    RunInput, RunSnapshot,
+)
+from backend.run_worker.auth import Owner, owner
+from backend.safe_logging import SafeRequests
+from backend.run_worker.prompts_v1 import apply_artifact
 from backend.run_worker.store import Store, StoreError, TERMINAL
 from backend.run_worker.workflow import FAKE_VERSIONS, LIVE_VERSION
 
-app = FastAPI(title="CoFounder-Agent v1 worker slice", version="1.0")
-bearer = HTTPBearer(auto_error=False)
-
-
-@dataclass(frozen=True)
-class Owner:
-    subject: str
-    expires_at: float
-
-
-def owner(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
-    if len(settings.v1_jwt_secret) < 32:
-        raise StoreError(503, "service_unavailable", "Authentication is not configured")
-    if credentials is None:
-        raise StoreError(401, "unauthorized", "Bearer token required")
-    try:
-        claims = jwt.decode(credentials.credentials, settings.v1_jwt_secret, algorithms=["HS256"],
-                            audience=settings.v1_jwt_audience, issuer=settings.v1_jwt_issuer,
-                            options={"require_exp": True, "require_sub": True, "require_aud": True, "require_iss": True})
-        if not claims["sub"] or len(claims["sub"]) > 200:
-            raise JWTError("Invalid subject")
-        return Owner(claims["sub"], float(claims["exp"]))
-    except (JWTError, ValueError, TypeError):
-        raise StoreError(401, "unauthorized", "Invalid or expired bearer token") from None
+app = FastAPI(title="CoFounder-Agent Run Contract", version="1.0.0")
+app.add_middleware(SafeRequests, private=True)
 
 
 def store():
@@ -75,42 +56,44 @@ async def database_error(request, exc):
         "code": "service_unavailable", "message": "Database temporarily unavailable", "retryable": True}})
 
 
-@app.post("/runs", response_model=RunSnapshot, status_code=202)
+@app.post("/runs", response_model=RunSnapshot, status_code=202, responses=error_responses(409))
 def submit(body: RunInput, user: OwnerDependency, database: StoreDependency,
-           idempotency_key: Annotated[str | None, Header(min_length=1, max_length=200)] = None):
+           idempotency_key: IdempotencyKey = None):
     try:
         mode = settings.require_v1_provider_mode()
     except ValueError as exc:
         raise StoreError(503, "service_unavailable", str(exc)) from None
     version = LIVE_VERSION if mode == "live" else FAKE_VERSIONS[-1]
-    # An omitted key retains the merged contract's create-on-every-request behavior.
-    return database.submit(user.subject, idempotency_key or str(uuid4()), body.model_dump(mode="json"),
-                           version=version)
+    return database.submit(
+        user.subject, idempotency_key, body.model_dump(mode="json"), version=version,
+        token_limit=settings.v1_run_token_limit, cost_limit=settings.v1_run_cost_limit_nanousd,
+        require_review=mode == "live" and settings.v1_require_founder_review,
+    )
 
 
-@app.get("/runs", response_model=HistoryPage)
+@app.get("/runs", response_model=HistoryPage, responses=error_responses())
 def history(user: OwnerDependency, database: StoreDependency,
             limit: Annotated[int, Query(ge=1, le=100)] = 25,
-            cursor: Annotated[str | None, Query(max_length=256)] = None):
+            cursor: HistoryCursor = None):
     return database.history(user.subject, limit, cursor)
 
 
-@app.get("/runs/{run_id}", response_model=RunSnapshot)
+@app.get("/runs/{run_id}", response_model=RunSnapshot, responses=error_responses(404))
 def snapshot(run_id: UUID, user: OwnerDependency, database: StoreDependency):
     return database.snapshot(user.subject, run_id)
 
 
-@app.get("/runs/{run_id}/artifacts", response_model=ArtifactList)
+@app.get("/runs/{run_id}/artifacts", response_model=ArtifactList, responses=error_responses(404))
 def artifacts(run_id: UUID, user: OwnerDependency, database: StoreDependency):
     return {"artifacts": database.snapshot(user.subject, run_id)["artifacts"]}
 
 
-@app.get("/runs/{run_id}/artifacts/{artifact_id}", response_model=Artifact)
+@app.get("/runs/{run_id}/artifacts/{artifact_id}", response_model=Artifact, responses=error_responses(404))
 def artifact(run_id: UUID, artifact_id: Identifier, user: OwnerDependency, database: StoreDependency):
     return database.artifact(user.subject, run_id, artifact_id)
 
 
-@app.get("/runs/{run_id}/events")
+@app.get("/runs/{run_id}/events", response_class=Response, responses=EVENT_RESPONSES)
 async def events(request: Request, run_id: UUID, user: OwnerDependency, database: StoreDependency,
                  after: EventId = 0,
                  last_event_id: Annotated[EventId | None, Header(alias="Last-Event-ID")] = None):
@@ -132,7 +115,9 @@ async def events(request: Request, run_id: UUID, user: OwnerDependency, database
             for event in batch:
                 if time.time() >= user.expires_at:
                     return
-                yield f'id: {event["event_id"]}\nevent: {event["type"]}\ndata: {json.dumps(event)}\n\n'
+                # Use the same datetime serialization as REST, including for already persisted events.
+                payload = EVENT_ADAPTER.validate_python(event).model_dump(mode="json")
+                yield f'id: {event["event_id"]}\nevent: {event["type"]}\ndata: {json.dumps(payload)}\n\n'
                 cursor = event["event_id"]
                 if event["type"] == "run.updated" and event["data"]["status"] in TERMINAL:
                     return
@@ -145,10 +130,16 @@ async def events(request: Request, run_id: UUID, user: OwnerDependency, database
                 await asyncio.sleep(0.2)
 
     return StreamingResponse(stream(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                             headers={"X-Accel-Buffering": "no"})
 
 
-@app.get("/runs/{run_id}/exports/{format}")
+@app.post("/runs/{run_id}/reviews/{review_id}/decisions",
+          response_model=ReviewReceipt, responses=error_responses(404, 409))
+def review(run_id: UUID, review_id: Identifier, body: ReviewDecision, user: OwnerDependency, database: StoreDependency):
+    return database.decide_review(user.subject, run_id, review_id, body.model_dump(mode="json"))
+
+
+@app.get("/runs/{run_id}/exports/{format}", response_class=Response, responses=EXPORT_RESPONSES)
 async def export(run_id: UUID, format: Literal["pdf", "markdown", "pptx"],
                  user: OwnerDependency, database: StoreDependency):
     state = await run_in_threadpool(database.snapshot, user.subject, run_id)

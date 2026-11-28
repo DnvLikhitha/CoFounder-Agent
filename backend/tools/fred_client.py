@@ -26,7 +26,7 @@ async def fetch_fred_data(series_ids: list[str] | None = None, caller: str = "")
         return ""
 
     ids = series_ids or ["FEDFUNDS", "DFF", "UNRATE"]
-    logger.info(f"📊 FRED [{caller or '?'}]: Calling — series={ids}")
+    logger.debug("FRED request started")
     url = "https://api.stlouisfed.org/fred/series/observations"
 
     lines = []
@@ -52,7 +52,7 @@ async def fetch_fred_data(series_ids: list[str] | None = None, caller: str = "")
                         label = FRED_SERIES.get(sid, sid)
                         lines.append(f"- {label}: {val} (as of {date})")
                 except Exception as e:
-                    logger.debug(f"FRED series {sid} failed: {type(e).__name__}")
+                    logger.debug(f"FRED series request failed: {type(e).__name__}")
     except Exception as e:
         logger.warning(f"FRED failed: {type(e).__name__}")
         return ""

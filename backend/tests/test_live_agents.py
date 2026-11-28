@@ -1,5 +1,6 @@
 """Existing agents exercised through the durable adapter without external services."""
 import asyncio
+from dataclasses import replace
 from importlib import import_module
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from backend import agents
 from backend.config import Settings
 from backend.context import RunContext
+from backend.llm.profiles import STARTUP_PROMPTS_V1
 from backend.run_worker import live_agents
 from backend.run_worker.provider_call import ClaimCalls, call_with_deadline
 from backend.run_worker.workflow import LIVE_STEPS, LIVE_VERSION, InvalidOutput, check_graph, validate_output
@@ -19,7 +21,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "live_agent_outputs.json"
 
 
 class FixtureGroq:
-    def __init__(self, *, api_key):
+    def __init__(self, *, api_key, **kwargs):
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.complete))
         self.outputs = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
@@ -37,13 +39,14 @@ class FixtureGroq:
             module = import_module(spec.agent.__module__)
             if prompt.startswith(module.PROMPT_TEMPLATE.splitlines()[0]):
                 payload = self.outputs[step_id]
-                return SimpleNamespace(choices=[SimpleNamespace(
+                return SimpleNamespace(model=model, usage=SimpleNamespace(prompt_tokens=300, completion_tokens=100),
+                                       choices=[SimpleNamespace(
                     message=SimpleNamespace(content=f"```json\n{json.dumps(payload)}\n```")
                 )])
         raise AssertionError("No existing agent prompt matched")
 
 
-def fixture_provider(step_id, body, upstream):
+def fixture_provider(step_id, body, upstream, *, prompt_version=STARTUP_PROMPTS_V1, **options):
     # This function is importable by spawned worker children on Windows.
     search = "Verified internship research\nSource: https://example.org/audit-source"
     fred = "Federal Funds Rate: 4.25 (synthetic fixture)"
@@ -55,7 +58,7 @@ def fixture_provider(step_id, body, upstream):
         patch("backend.agents.layer1.agent3_competitors.search_web", new=AsyncMock(return_value=search)),
         patch("backend.agents.layer2.agent9_financials.fetch_fred_data", new=AsyncMock(return_value=fred)),
     ):
-        return live_agents.live_provider(step_id, body, upstream)
+        return live_agents.live_provider(step_id, body, upstream, prompt_version=prompt_version, **options)
 
 
 def invalid_provider(step_id, body, upstream):
@@ -63,6 +66,60 @@ def invalid_provider(step_id, body, upstream):
 
 
 class LiveAgentTests(unittest.TestCase):
+    def test_versioned_prompt_bundle_matches_its_fingerprint(self):
+        live_agents.verify_prompt_bundles()
+
+    def test_prompt_fingerprint_rejects_changes_in_rendering_dependencies(self):
+        changes = {
+            "backend/run_worker/prompts_v1.py": ('content["problem_refined"]', 'content["alternate_refinement"]'),
+            "backend/context.py": ('problem_refined: str = ""', 'problem_refined: str = "Default refinement"'),
+            "backend/agents/layer1/agent2_market.py": ('async def fetch_research', 'async def fetch_updated_research'),
+            "backend/tools/search.py": ("--- Web Search Results ---", "--- Alternate Search Results ---"),
+            "backend/tools/fred_client.py": ("Federal Funds Rate (%)", "Alternate Federal Funds Rate (%)"),
+            "backend/llm/messages.py": ('"role": "system"', '"role": "developer"'),
+        }
+        original_read = Path.read_text
+        for file, (before, after) in changes.items():
+            with self.subTest(file=file):
+                def changed_source(path, *args, **kwargs):
+                    source = original_read(path, *args, **kwargs)
+                    if path.as_posix().endswith("/" + file):
+                        self.assertIn(before, source)
+                        return source.replace(before, after, 1)
+                    return source
+
+                with patch.object(Path, "read_text", changed_source):
+                    with self.assertRaisesRegex(ValueError, "startup-prompts-v1.*recorded fingerprint"):
+                        live_agents.verify_prompt_bundles()
+
+    def test_prompt_fingerprint_validates_the_registered_system_prompt(self):
+        bundle = live_agents.PROMPT_BUNDLES[STARTUP_PROMPTS_V1]
+        changed = replace(bundle, system_prompt="A different system prompt")
+        with patch.object(live_agents, "PROMPT_BUNDLES", {STARTUP_PROMPTS_V1: changed}):
+            with self.assertRaisesRegex(ValueError, "startup-prompts-v1.*recorded fingerprint"):
+                live_agents.verify_prompt_bundles()
+
+    def test_provider_dispatches_the_pinned_renderer_and_system_prompt(self):
+        old = live_agents.PROMPT_BUNDLES[STARTUP_PROMPTS_V1]
+        older_run = AsyncMock(return_value={"problem_refined": "Old render"})
+        newer_run = AsyncMock(return_value={"problem_refined": "New render"})
+        bundles = {
+            STARTUP_PROMPTS_V1: replace(old, run_agent=older_run),
+            "startup-prompts-v2": replace(old, run_agent=newer_run, system_prompt="New system prompt"),
+        }
+        step, body = "problem_refined", {"problem": "Synthetic problem"}
+        with patch.object(live_agents, "PROMPT_BUNDLES", bundles), \
+             patch.object(live_agents, "PROMPT_VERSION", "startup-prompts-v2"), \
+             patch("backend.llm.client.AsyncGroq", FixtureGroq):
+            for version, bundle in bundles.items():
+                with self.subTest(version=version):
+                    self.assertEqual(live_agents.live_provider(step, body, {}, prompt_version=version),
+                                     bundle.run_agent.return_value)
+                    called_step, called_body, upstream, client = bundle.run_agent.await_args.args
+                    self.assertEqual((called_step, called_body, upstream), (step, body, {}))
+                    self.assertEqual(client.system_prompt, bundle.system_prompt)
+                    bundle.run_agent.assert_awaited_once()
+
     def test_registration_matches_all_existing_agents_and_rejects_empty_output(self):
         legacy = {getattr(agents, name) for name in dir(agents) if name.startswith("Agent")}
         self.assertEqual(len(legacy), 16)

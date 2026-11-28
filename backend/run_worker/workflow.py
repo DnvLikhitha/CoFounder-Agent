@@ -168,6 +168,10 @@ class ProviderFailure(Exception):
     """Expected provider failure with a sanitized public error."""
 
 
+class ProviderTimeout(ProviderFailure):
+    pass
+
+
 @dataclass(frozen=True)
 class PartialOutput:
     """A provider explicitly identifies usable but incomplete output."""

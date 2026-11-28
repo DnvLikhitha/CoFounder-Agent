@@ -16,7 +16,7 @@ async def search_web(query: str, num_results: int = 5, caller: str = "") -> str:
         logger.info(f"🔍 SerpAPI [{caller or '?'}]: SKIPPED (no SERPAPI_API_KEY)")
         return ""
 
-    logger.info(f"🔍 SerpAPI [{caller or '?'}]: Calling — query='{query[:60]}{'...' if len(query) > 60 else ''}'")
+    logger.debug("SerpAPI request started")
     url = "https://serpapi.com/search"
     params = {
         "q": query,
