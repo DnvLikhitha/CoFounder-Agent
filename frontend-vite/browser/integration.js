@@ -489,5 +489,6 @@ test('The previous PDF stays available during preparation, cancellation and fail
 
   await page.getByRole('link', { name: 'History', exact: true }).click()
   await page.waitForURL('**/history')
-  assert.equal(await page.evaluate((value) => globalThis.revokedDownloadUrls.includes(value), replacementUrl), true)
+  // The URL can update before React runs the export component's effect cleanup.
+  await page.waitForFunction((value) => globalThis.revokedDownloadUrls.includes(value), replacementUrl)
 })
