@@ -1481,7 +1481,10 @@ class WorkerIntegrationTests(unittest.TestCase):
             seen[step_id] = frozenset(upstream)
             if step_id in {"market_research", "competitor_analysis"}:
                 independent_research.wait(5)
-            return call_with_deadline(provider, step_id, body, upstream, timeout, calls)
+            output = call_with_deadline(provider, step_id, body, upstream, timeout, calls)
+            if step_id == "pitch_deck":
+                output["slides"].reverse()
+            return output
 
         with patch("backend.run_worker.worker.live_provider", fixture_provider), \
              patch("backend.run_worker.worker.call_with_deadline", observe_call), \
@@ -1533,6 +1536,8 @@ class WorkerIntegrationTests(unittest.TestCase):
                          b"A Verified Internship Gap", b"Verify hours before applying.",
                          b"Speaker notes: Describe the schedule verification workflow."):
             self.assertIn(expected, pdf.content)
+        positions = [pdf.content.index(f"Slide {number}:".encode()) for number in range(1, 13)]
+        self.assertEqual(positions, sorted(positions))
         pptx = self.client.get(f"{exports}/pptx", headers=self.headers())
         self.assertEqual(pptx.status_code, 200)
         deck = Presentation(BytesIO(pptx.content))

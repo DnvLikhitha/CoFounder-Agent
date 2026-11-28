@@ -86,7 +86,14 @@ def add_pitch_deck(story, styles, slides):
     text_style = styles["ArtifactText"]
     heading_style = ParagraphStyle("PitchSlide", parent=text_style, fontName="Helvetica-Bold", keepWithNext=True)
     bullet_style = ParagraphStyle("PitchBullet", parent=styles["BulletItem"], textColor=DARK_BG)
-    for position, slide in enumerate(slides, start=1):
+
+    def slide_order(slide):
+        try:
+            return int(slide.get("slide_number"))
+        except (TypeError, ValueError, OverflowError):
+            return float("inf")
+
+    for position, slide in enumerate(sorted(slides, key=slide_order), start=1):
         heading = f"Slide {slide.get('slide_number') or position}"
         if title := slide.get("title"):
             heading += f": {title}"
