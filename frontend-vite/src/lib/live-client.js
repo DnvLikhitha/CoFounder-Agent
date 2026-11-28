@@ -12,6 +12,14 @@ const statusMessages = {
   429: 'Too many requests. Wait before trying again.',
 }
 
+function parseRetryAfter(response) {
+  const value = response.headers.get('Retry-After')
+  if (!value) return undefined
+  if (/^\d+$/.test(value)) return Number(value) * 1000
+  const time = Date.parse(value)
+  return Number.isNaN(time) ? undefined : Math.max(0, time - Date.now())
+}
+
 export function createLiveClient(fetcher = globalThis.fetch, session) {
   async function request(path, options) {
     const signal = options?.signal
@@ -46,6 +54,7 @@ export function createLiveClient(fetcher = globalThis.fetch, session) {
       status: response.status,
       code: body?.error?.code,
       retryable: response.status >= 500 || response.status === 429 || body?.error?.retryable,
+      retryAfterMs: response.status === 429 ? parseRetryAfter(response) : undefined,
     })
   }
 

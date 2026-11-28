@@ -60,7 +60,7 @@ export function watchRun(client, runId, publish, {
         failures += 1
         if (error instanceof ProtocolError) protocolFailures += 1
         const incompatible = protocolFailures >= 3
-        const requiresAction = [401, 403, 404, 422, 429].includes(error.status)
+        const requiresAction = [401, 403, 404, 422].includes(error.status)
         if (requiresAction || incompatible || failures > maxRetries) {
           const message = incompatible
             ? `The API repeatedly sent incompatible run data. ${error.message}`
@@ -68,9 +68,16 @@ export function watchRun(client, runId, publish, {
           update('error', message)
           return
         }
-        update('reconnecting', error.status === 503
-          ? 'The run API is unavailable. Reconnecting…' : 'Connection interrupted. Checking for updates…')
-        await delay(retryDelay(failures), signal).catch(() => {})
+        let wait = retryDelay(failures)
+        let message = 'Connection interrupted. Checking for updates…'
+        if (error.status === 429) {
+          message = 'Too many requests. Reconnecting…'
+          wait = Math.min(Math.max(wait * 2, error.retryAfterMs ?? 0), 2_147_483_647)
+        } else if (error.status === 503) {
+          message = 'The run API is unavailable. Reconnecting…'
+        }
+        update('reconnecting', message)
+        await delay(wait, signal).catch(() => {})
       }
     }
   }

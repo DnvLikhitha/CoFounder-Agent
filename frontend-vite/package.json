@@ -9,8 +9,8 @@
     "build": "vite build --mode live",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test test/*.test.js",
-    "test:browser": "node --test browser/integration.test.js",
+    "test": "node --test",
+    "test:browser": "node --test browser/integration.js",
     "verify:live": "node browser/verify-live.js",
     "dev:live": "vite --mode live",
     "build:live": "vite build --mode live"
@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@supabase/auth-js": "^2.108.2",
     "@vitejs/plugin-react": "^6.3.0",
     "eslint": "^10.15.0",
     "eslint-plugin-react-hooks": "^7.1.1",

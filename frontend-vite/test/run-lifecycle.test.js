@@ -236,6 +236,43 @@ test('live reconnect gets a fresh snapshot and replays over the relative API pat
   assert.equal(final.steps.find(({ step_id }) => step_id === 'summary').status, 'failed')
 })
 
+test('rate-limited snapshots and streams recover automatically and finish replay', async () => {
+  const { snapshot, final, wire } = fixtures.succeeded
+  const rateLimited = () => new Response(null, { status: 429, headers: { 'Retry-After': '0' } })
+  let snapshotReads = 0
+  let streamReads = 0
+  const client = createLiveClient(async (url) => {
+    if (!url.includes('/events?')) return ++snapshotReads === 1 ? rateLimited() : Response.json(snapshot)
+    if (++streamReads === 1) return rateLimited()
+    return new Response(wire, { headers: { 'Content-Type': 'text/event-stream' } })
+  })
+  const updates = []
+  await watchRun(client, snapshot.run_id, (update) => updates.push(update), { retryDelay: () => 0 }).done
+  assert.equal(snapshotReads, 3)
+  assert.equal(streamReads, 2)
+  assert.deepEqual(updates.filter(({ connection }) => connection === 'reconnecting').map(({ message }) => message),
+    ['Too many requests. Reconnecting…', 'Too many requests. Reconnecting…'])
+  assert.deepEqual(updates.at(-1), { snapshot: final, connection: 'closed', message: '' })
+})
+
+test('rate-limited reconnect uses Retry-After and stops at the retry limit', async (t) => {
+  const { run_id } = fixtures.succeeded.snapshot
+  const timer = t.mock.method(globalThis, 'setTimeout', (callback) => {
+    queueMicrotask(callback)
+  })
+  let reads = 0
+  const client = createLiveClient(async () => {
+    reads += 1
+    return new Response(null, { status: 429, headers: { 'Retry-After': '2' } })
+  })
+  const updates = []
+  await watchRun(client, run_id, (update) => updates.push(update), { retryDelay: () => 100, maxRetries: 1 }).done
+  assert.deepEqual(timer.mock.calls.map(({ arguments: [, ms] }) => ms), [2000])
+  assert.equal(reads, 2)
+  assert.equal(updates.at(-1).connection, 'error')
+  assert.match(updates.at(-1).message, /Too many requests/)
+})
+
 test('terminal refresh does not open a stream, and a 404 does not retry', async () => {
   const { final } = fixtures.partial
   let reads = 0

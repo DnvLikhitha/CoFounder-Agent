@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createClient } from '@supabase/supabase-js'
+import { AuthClient } from '@supabase/auth-js'
 import { authConfig } from '../src/lib/auth-config.js'
 import { checkArtifact, checkSnapshot } from '../src/lib/run-state.js'
 
@@ -20,7 +20,12 @@ async function verify() {
   }
   if (missing.length) throw new Error(`Missing live verification settings: ${missing.join(', ')}.`)
 
-  const api = URL.parse(env.LIVE_API_ORIGIN)
+  let api
+  try {
+    api = new URL(env.LIVE_API_ORIGIN)
+  } catch {
+    api = null
+  }
   if (api?.protocol !== 'https:' ||
       (env.LIVE_API_ORIGIN !== api.origin && env.LIVE_API_ORIGIN !== `${api.origin}/`)) {
     throw new Error('LIVE_API_ORIGIN must be an HTTPS origin.')
@@ -34,8 +39,12 @@ async function verify() {
     VITE_SUPABASE_PUBLISHABLE_KEY: env.LIVE_SUPABASE_PUBLISHABLE_KEY,
     VITE_SUPABASE_ANON_KEY: env.LIVE_SUPABASE_ANON_KEY,
   })
-  const { auth } = createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  const auth = new AuthClient({
+    url: `${url}/auth/v1`,
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
   })
   const { data, error } = await auth.signInWithPassword({ email: env.LIVE_TEST_EMAIL, password: env.LIVE_TEST_PASSWORD })
   if (error || !data.session) throw new Error(`Supabase sign-in failed${error?.status ? ` (HTTP ${error.status})` : ''}.`)
