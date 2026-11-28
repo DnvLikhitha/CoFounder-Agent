@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import { createServer } from 'vite'
+import revisedArtifacts from '../../shared/contracts/fixtures/revised/artifacts.json' with { type: 'json' }
+import revisedStart from '../../shared/contracts/fixtures/revised/snapshot.json' with { type: 'json' }
 import { fullAgentFixtures } from '../src/fixtures/full-agent-runs.js'
 import { applyFrame, toFrame } from '../src/lib/run-state.js'
 
@@ -46,7 +48,7 @@ function accessToken(email, generation, expiresAt) {
   return `${encode({ alg: 'ES256' })}.${encode({ sub: email, generation, exp: expiresAt })}.dGVzdA`
 }
 
-async function setup(t) {
+async function setup(t, handleRun) {
   const page = await browser.newPage()
   page.setDefaultTimeout(10000)
   t.after(() => page.context().close())
@@ -113,6 +115,7 @@ async function setup(t) {
     if (identity.email === other) {
       return route.fulfill({ status: 404, json: { error: { message: 'Run not found' } } })
     }
+    if (handleRun) return handleRun(route, identity)
     if (pathname === runPath) return route.fulfill({ json: snapshot })
     if (pathname === `${runPath}/events`) {
       const cursor = Number(searchParams.get('after'))
@@ -149,6 +152,73 @@ async function setup(t) {
   return { page, state }
 }
 
+async function setupPricingReview(t, decisionFailure) {
+  const path = `/api/v1/runs/${revisedStart.run_id}`
+  const eventFile = new URL('../../shared/contracts/fixtures/revised/events.jsonl', import.meta.url)
+  const events = (await readFile(eventFile, 'utf8')).trim().split(/\r?\n/).map((line) => JSON.parse(line))
+  Object.assign(events[4].data, {
+    outcome: 'failed', score: null, reasons: ['Pricing validation failed.'],
+    dimensions: [{ dimension: 'consistency', outcome: 'failed', reason: 'The draft pricing assumptions conflict.' }],
+  })
+  Object.assign(events[8].data, { method: 'llm', outcome: 'not_evaluated', score: null, dimensions: [],
+    reasons: ['The optional judge did not finish.'] })
+  Object.assign(events[23].data, { evidence: [
+    { claim_path: '/arr_month_12_usd', artifact_id: 'pricing_strategy-r2', source_url: 'https://example.test/research',
+      relationship: 'citation' },
+  ] })
+  const artifacts = new Map(revisedArtifacts.map((artifact) => [artifact.reference.artifact_id, structuredClone(artifact)]))
+  Object.assign(artifacts.get('financial_projections-r2').content, {
+    assumptions: { reviewed_price_usd: 50 },
+    uncertainty: 'Renewal rates are unmeasured.',
+    sources: [{ title: 'Research source', url: 'https://example.test/research' }],
+  })
+  let snapshot = revisedStart
+  const waiting = new Set()
+  const decisions = []
+  const streamed = []
+  function advance(cursor, notify = true) {
+    snapshot = events.slice(snapshot.last_event_id, cursor).map(toFrame).reduce(applyFrame, snapshot)
+    if (notify) {
+      waiting.forEach((resolve) => resolve())
+      waiting.clear()
+    }
+  }
+  advance(12)
+  const { page } = await setup(t, async (route, identity) => {
+    const request = route.request()
+    const { pathname, searchParams } = new URL(request.url())
+    if (pathname === path) return route.fulfill({ json: snapshot })
+    if (pathname === `${path}/events`) {
+      const after = Number(searchParams.get('after'))
+      if (after >= snapshot.last_event_id) await new Promise((resolve) => waiting.add(resolve))
+      const batch = events.slice(after, snapshot.last_event_id)
+      streamed.push(...batch.map(({ event_id }) => event_id))
+      return route.fulfill({ headers: { 'content-type': 'text/event-stream' }, body: wire(batch) }).catch(() => {})
+    }
+    if (pathname.startsWith(`${path}/artifacts/`)) return route.fulfill({ json: artifacts.get(pathname.split('/').at(-1)) })
+    if (request.method() === 'POST' && pathname.endsWith('/decisions')) {
+      const decision = request.postDataJSON()
+      decisions.push({ reviewId: pathname.split('/').at(-2), decision, owner: identity.email })
+      if (decisionFailure) {
+        if (decisionFailure === 409) advance(16, false)
+        return route.fulfill({ status: decisionFailure })
+      }
+      const receipt = events[snapshot.last_event_id].data
+      receipt.decision = decision
+      advance(decision.decision === 'revise' ? 16 : 20)
+      return route.fulfill({ json: receipt })
+    }
+    return route.fulfill({ status: 404 })
+  })
+  const initialStream = page.waitForRequest((request) => request.url().includes(`${path}/events?after=12`))
+  await page.goto(`${origin}/run/${revisedStart.run_id}`)
+  await signIn(page)
+  const review = page.getByRole('region', { name: 'Review required' })
+  await review.getByRole('button', { name: 'Approve', exact: true }).waitFor()
+  await initialStream
+  return { page, review, decisions, streamed, finish: () => advance(25) }
+}
+
 async function signIn(page, email = owner, password = 'synthetic-password') {
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill(password)
@@ -160,6 +230,80 @@ async function download(page, button, filename) {
   assert.equal(file.suggestedFilename(), filename)
   return readFile(await file.path(), 'utf8')
 }
+
+test('pricing revision, evaluation evidence, and downstream regeneration follow SSE', { timeout: 60000 }, async (t) => {
+  const { page, review, decisions, streamed, finish } = await setupPricingReview(t)
+  const outputs = page.getByRole('region', { name: 'Run outputs' })
+  const picker = page.getByLabel('Browse outputs')
+  await outputs.getByText('The draft pricing assumptions conflict.').waitFor()
+  await outputs.getByText('Pricing validation failed.').waitFor()
+  await picker.selectOption('financial_projections')
+  await outputs.getByText('No source references were supplied.').waitFor()
+  await outputs.getByText('Not evaluated', { exact: true }).waitFor()
+  await outputs.getByText('The optional judge did not finish.').waitFor()
+  assert.equal(await outputs.getByText('Score unavailable').count(), 0)
+  await outputs.getByText('This forecast is a draft pending pricing approval.').waitFor()
+
+  await review.getByRole('button', { name: 'Revise pricing' }).click()
+  await review.getByRole('button', { name: 'Save revision for approval' }).click()
+  await review.getByRole('alert').getByText('Change at least one price before saving a revision.').waitFor()
+  assert.equal(decisions.length, 0)
+  await review.getByLabel('Monthly price (USD)').fill('50')
+  await review.getByLabel('Annual price (USD)').fill('500')
+  const revisedStream = page.waitForRequest('**/events?after=16')
+  await review.getByRole('button', { name: 'Save revision for approval' }).click()
+  await review.getByText('pricing-review-2').waitFor()
+  await revisedStream
+  assert.equal(decisions[0].reviewId, 'pricing-review-1')
+  assert.equal(decisions[0].owner, owner)
+  assert.deepEqual(decisions[0].decision.artifact_ids, ['pricing_strategy'])
+  assert.deepEqual(decisions[0].decision.pricing_revision,
+    { tier_name: 'Starter', price_monthly_usd: 50, price_annual_usd: 500 })
+
+  await picker.selectOption('pricing_strategy-r2')
+  await page.getByLabel('Compare with').selectOption('pricing_strategy')
+  const comparison = page.getByRole('region', { name: 'Revision comparison' })
+  await comparison.getByText('$30.00', { exact: true }).waitFor()
+  await comparison.getByText('$50.00', { exact: true }).waitFor()
+
+  const resumingStream = page.waitForRequest('**/events?after=20')
+  await review.getByRole('button', { name: 'Approve', exact: true }).click()
+  await outputs.getByText('Regenerating Financial Projections using updated inputs.').waitFor()
+  assert.deepEqual(decisions[1].decision.artifact_ids, ['pricing_strategy-r2'])
+  assert.equal(decisions[1].reviewId, 'pricing-review-2')
+  await resumingStream
+  finish()
+  await page.getByText('Run updates complete').waitFor()
+  assert.ok([13, 16, 17, 20, 22, 25].every((id) => streamed.includes(id)))
+
+  await picker.selectOption('financial_projections-r2')
+  await outputs.getByText('Regenerated using updated inputs.').waitFor()
+  await outputs.getByRole('region', { name: 'Uncertainty and limitations' }).getByText('Renewal rates are unmeasured.').waitFor()
+  await outputs.getByRole('region', { name: 'Assumptions' }).getByText('reviewed price usd').waitFor()
+  assert.equal(await outputs.getByRole('link', { name: 'Research source' }).getAttribute('href'), 'https://example.test/research')
+  await outputs.getByRole('button', { name: /View claim/ }).click()
+  await outputs.getByRole('region', { name: 'Evidence claim' }).getByText('6000', { exact: true }).waitFor()
+  await outputs.getByRole('button', { name: 'Pricing Strategy · Revision 2', exact: true }).last().click()
+  assert.equal(await picker.inputValue(), 'pricing_strategy-r2')
+})
+
+test('stale decisions reload the replacement checkpoint before another action', { timeout: 60000 }, async (t) => {
+  const { page, review, decisions } = await setupPricingReview(t, 409)
+  await review.getByRole('button', { name: 'Approve', exact: true }).click()
+  await page.getByText('This review changed. Check the current checkpoint before submitting again.').waitFor()
+  await review.getByText('pricing-review-2').waitFor()
+  await review.getByRole('button', { name: 'Approve', exact: true }).waitFor()
+  assert.deepEqual(decisions.map(({ reviewId }) => reviewId), ['pricing-review-1'])
+})
+
+test('an unauthorized review decision leaves the checkpoint and removes decision controls', { timeout: 60000 }, async (t) => {
+  const { review, decisions } = await setupPricingReview(t, 403)
+  await review.getByRole('button', { name: 'Reject', exact: true }).click()
+  await review.getByRole('alert').getByText('You do not have permission to access this resource.').waitFor()
+  await review.getByText('pricing-review-1').waitFor()
+  assert.equal(await review.getByRole('button', { name: 'Approve', exact: true }).count(), 0)
+  assert.equal(decisions[0].decision.decision, 'reject')
+})
 
 test('sign-in, protected routes, run submission, authenticated SSE renewal, reload and downloads', { timeout: 60000 }, async (t) => {
   const { page, state } = await setup(t)

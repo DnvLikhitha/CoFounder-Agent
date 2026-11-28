@@ -136,6 +136,13 @@ textarea { resize: vertical; }
 .output-navigation { margin-bottom: 1.15rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 .artifact-revision { margin-top: .3rem; }
 .artifact-detail { display: grid; gap: 1rem; }
+.artifact-revisions { margin-block: .75rem; }
+.artifact-revisions ul { list-style: none; padding: 0; margin: .4rem 0 .75rem; }
+.artifact-revisions button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.revision-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.revision-comparison > div { border: 1px solid var(--border); border-radius: 8px; padding: .75rem; }
+.evidence-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-evaluation + .agent-evaluation { margin-top: 1rem; }
 .artifact-detail > section { border-top: 1px solid var(--border); padding-top: .75rem; }
 .artifact-detail ul, .review-artifact ul { margin-block: .3rem; }
 .output-fields { display: grid; gap: .65rem; margin: .25rem 0 .85rem; }
@@ -191,6 +198,7 @@ summary { color: var(--accent); cursor: pointer; }
 }
 @media (max-width: 480px) {
   .field-row { grid-template-columns: 1fr; }
+  .revision-comparison { grid-template-columns: 1fr; }
   .site-header-inner { gap: .6rem .9rem; padding-inline: 1rem; }
   .mode { margin-left: 0; }
   .history-item { flex-wrap: wrap; }

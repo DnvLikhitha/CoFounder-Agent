@@ -16,7 +16,7 @@ export default function RunRoute({ client }) {
 
 function RunPage({ runId, client }) {
   const [view, setView] = useState(initial)
-  const [activeArtifactId, setActiveArtifactId] = useState(null)
+  const [selection, setSelection] = useState({ id: null, claimPath: null })
   const [reload, setReload] = useState({ attempt: 0, stale: false })
   const { attempt, stale } = reload
   const refresh = () => setReload((value) => ({ ...value, attempt: value.attempt + 1 }))
@@ -46,9 +46,11 @@ function RunPage({ runId, client }) {
   const review = current && snapshot.status === 'awaiting_review' ? snapshot.pending_review : null
   const progress = summarizeProgress(snapshot.manifest, snapshot.steps)
   const exportable = ['succeeded', 'partial'].includes(snapshot.status)
-  function viewArtifact(id) {
-    setActiveArtifactId(id)
-    document.getElementById('outputs-title')?.focus()
+  function viewArtifact(id, claimPath = null) {
+    setSelection({ id, claimPath })
+    const target = claimPath != null && selection.id === id && selection.claimPath === claimPath
+      ? 'evidence-claim' : 'outputs-title'
+    document.getElementById(target)?.focus()
   }
   return (
     <main className="page">
@@ -79,14 +81,16 @@ function RunPage({ runId, client }) {
       <div className="run-grid">
         <div className="results-workspace">
           <OutputSection artifacts={snapshot.artifacts} evaluations={snapshot.evaluations} client={client} runId={runId}
-            steps={progress.steps} status={snapshot.status} activeId={activeArtifactId} onSelect={setActiveArtifactId}
-            pricingReview={review?.revision_kind === 'pricing'} />
+            steps={progress.steps} status={snapshot.status} activeId={selection.id} claimPath={selection.claimPath}
+            onSelect={(id) => setSelection({ id, claimPath: null })} onViewArtifact={viewArtifact}
+            pricingReview={snapshot.pending_review?.revision_kind === 'pricing'} />
           {exportable && <Exports client={client} runId={runId} partial={snapshot.status === 'partial'} />}
         </div>
         <AgentProgressTracker steps={progress.steps} runStatus={snapshot.status} artifacts={snapshot.artifacts}
           onViewArtifact={viewArtifact} />
       </div>
-      <Evaluations evaluations={snapshot.evaluations} artifacts={snapshot.artifacts} manifest={snapshot.manifest} />
+      <Evaluations evaluations={snapshot.evaluations} artifacts={snapshot.artifacts} steps={progress.steps}
+        onViewArtifact={viewArtifact} />
     </main>
   )
 }
