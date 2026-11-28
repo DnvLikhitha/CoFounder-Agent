@@ -3,7 +3,7 @@ Layer 3: Agent 13 — Security & Compliance Advisor
 Identifies security requirements and compliance checklist.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are a Startup Security Architect who specializes in SaaS compliance for small teams.
@@ -71,9 +71,8 @@ Output EXACTLY this JSON:
 
 class Agent13_Security(BaseAgent):
     name = "Agent13_Security"
-    layer = 3
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         product = ctx.product_design
         features = [f.get("feature", "") for f in product.get("must_have_features", [])[:4]]
@@ -88,11 +87,3 @@ class Agent13_Security(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.security_compliance = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.security_compliance = {"owasp_top10_checklist": [], "compliance_requirements": []}
-        return ctx

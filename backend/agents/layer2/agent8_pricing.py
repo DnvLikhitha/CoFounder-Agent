@@ -3,7 +3,7 @@ Layer 2: Agent 8 — Pricing Strategist (parallel-eligible)
 Recommends specific pricing with psychological pricing rationale.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are a Pricing Strategy expert who uses value-based and behavioral economics frameworks.
@@ -68,9 +68,8 @@ Output EXACTLY this JSON:
 
 class Agent8_Pricing(BaseAgent):
     name = "Agent8_Pricing"
-    layer = 2
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         comp = ctx.competitor_analysis
         biz = ctx.business_model
@@ -92,11 +91,3 @@ class Agent8_Pricing(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.pricing_strategy = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.pricing_strategy = {"tiers": []}
-        return ctx

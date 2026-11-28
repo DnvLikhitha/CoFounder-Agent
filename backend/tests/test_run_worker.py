@@ -918,7 +918,9 @@ class WorkerIntegrationTests(unittest.TestCase):
 
     def test_hung_provider_fails_step_and_worker_can_process_next_run(self):
         run_id = self.submit()["run_id"]
-        with patch.object(settings, "v1_provider_timeout_seconds", 6):
+        # The deadline includes Windows spawn and imports for the healthy siblings.
+        # Pricing deliberately hangs, so use a bound that lets them reach the fixture.
+        with patch.object(settings, "v1_provider_timeout_seconds", 25):
             execute_claim(self.database, self.database.claim(2), hang_during_pricing, lease_seconds=2)
         final = self.database.snapshot("alice", run_id)
         steps = {step["step_id"]: step for step in final["steps"]}
@@ -1531,6 +1533,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(pdf.status_code, 200)
         self.assertIn(b"Campus Bridge connects busy students", pdf.content)
         self.assertIn(b"Campus Pilot", pdf.content)
+        self.assertIn(b"Estimated infrastructure cost: Unavailable.", pdf.content)
         for expected in (b"Customer Personas", b"Product Design", b"MVP Roadmap", b"Business Model",
                          b"Technical Architecture", b"CREATE TABLE verified_roles", b"Security and Compliance",
                          b"A Verified Internship Gap", b"Verify hours before applying.",

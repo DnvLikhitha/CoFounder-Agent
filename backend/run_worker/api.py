@@ -13,7 +13,7 @@ import psycopg
 from starlette.concurrency import run_in_threadpool
 
 from backend.config import settings
-from backend.context import RunContext
+from backend.context import ReportData
 from backend.contracts.rest import EVENT_RESPONSES, EXPORT_RESPONSES, HistoryCursor, IdempotencyKey, error_responses
 from backend.contracts.v1 import (
     Artifact, ArtifactList, EVENT_ADAPTER, EventId, HistoryPage, Identifier, ReviewDecision, ReviewReceipt,
@@ -21,7 +21,6 @@ from backend.contracts.v1 import (
 )
 from backend.run_worker.auth import Owner, owner
 from backend.safe_logging import SafeRequests
-from backend.run_worker.prompts_v1 import apply_artifact
 from backend.run_worker.store import Store, StoreError, TERMINAL, latest_artifacts
 from backend.run_worker.workflow import FAKE_VERSIONS, REVIEWED_VERSION
 
@@ -68,7 +67,7 @@ def submit(body: RunInput, user: OwnerDependency, database: StoreDependency,
         token_limit=settings.v1_run_token_limit, cost_limit=settings.v1_run_cost_limit_nanousd,
         require_review=mode == "live" and settings.v1_require_founder_review,
         pricing_review=settings.v1_require_pricing_review,
-        llm_evaluation=settings.v1_llm_evaluation,
+        llm_evaluation=mode == "live" and settings.v1_llm_evaluation,
     )
 
 
@@ -146,17 +145,18 @@ async def export(run_id: UUID, format: Literal["pdf", "markdown", "pptx"],
     state = await run_in_threadpool(database.snapshot, user.subject, run_id)
     if state["status"] not in {"succeeded", "partial"}:
         raise StoreError(409, "state_conflict", "Run has no exportable result")
-    context = RunContext(run_id=str(run_id), problem_raw=state["input"]["problem"],
-                         domain=state["input"]["domain"], geography=state["input"]["geography"])
-    context.created_at = datetime.fromisoformat(state["created_at"])
-    context.completed_at = datetime.fromisoformat(state["completed_at"])
-    context.status = {step["step_id"]: step["status"] for step in state["steps"]}
+    context = ReportData(run_id=str(run_id), problem_raw=state["input"]["problem"],
+                         domain=state["input"]["domain"], geography=state["input"]["geography"],
+                         created_at=datetime.fromisoformat(state["created_at"]),
+                         completed_at=datetime.fromisoformat(state["completed_at"]))
+    step_status = {step["step_id"]: step["status"] for step in state["steps"]}
     references = latest_artifacts(state).values() if state["manifest"]["version"] == REVIEWED_VERSION else state["artifacts"]
     for reference in references:
-        if state["manifest"]["version"] == REVIEWED_VERSION and context.status[reference["step_id"]] not in {"succeeded", "partial"}:
+        if state["manifest"]["version"] == REVIEWED_VERSION and step_status[reference["step_id"]] not in {"succeeded", "partial"}:
             continue
         body = await run_in_threadpool(database.artifact, user.subject, run_id, reference["artifact_id"])
-        apply_artifact(context, reference["kind"], body["content"])
+        kind, content = reference["kind"], body["content"]
+        setattr(context, kind, content["problem_refined"] if kind == "problem_refined" else content)
     labels = {step["step_id"]: step["label"] for step in state["manifest"]["steps"]}
     missing = [labels[step["step_id"]] for step in state["steps"] if step["status"] in {"skipped", "failed"}]
     degraded = [labels[step["step_id"]] for step in state["steps"] if step["status"] == "partial"]

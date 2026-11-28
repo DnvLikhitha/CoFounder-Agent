@@ -3,7 +3,7 @@ Layer 1: Agent 4 — Customer Persona Builder
 Creates 2 detailed Ideal Customer Profile (ICP) personas.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are a UX Researcher and Customer Development expert.
@@ -73,9 +73,8 @@ Output EXACTLY this JSON:
 
 class Agent4_Personas(BaseAgent):
     name = "Agent4_Personas"
-    layer = 1
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         segments = [s.get("segment", "") for s in market.get("target_segments", [])]
@@ -88,11 +87,3 @@ class Agent4_Personas(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.customer_personas = parsed.get("personas", [])
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.customer_personas = []
-        return ctx

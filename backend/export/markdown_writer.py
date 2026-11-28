@@ -2,11 +2,11 @@
 export/markdown_writer.py — Generate comprehensive Markdown startup plan
 """
 from backend.agents.investor_metrics import format_metric, investor_metrics
-from backend.context import RunContext
+from backend.context import ReportData
 
 
-async def generate_markdown(ctx: RunContext, *, notice="") -> str:
-    """Generate a complete Markdown startup plan from the RunContext."""
+async def generate_markdown(ctx: ReportData, *, notice="") -> str:
+    """Generate a complete Markdown startup plan from the ReportData."""
     idea = ctx.startup_idea
     market = ctx.market_research
     comp = ctx.competitor_analysis

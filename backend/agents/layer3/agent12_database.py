@@ -3,7 +3,7 @@ Layer 3: Agent 12 — Database Schema Designer
 Designs database tables, relationships, and indexes.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are a Database Architect specializing in PostgreSQL for SaaS applications.
@@ -46,9 +46,8 @@ Output EXACTLY this JSON:
 
 class Agent12_DatabaseSchema(BaseAgent):
     name = "Agent12_DatabaseSchema"
-    layer = 3
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         product = ctx.product_design
         biz = ctx.business_model
@@ -67,11 +66,3 @@ class Agent12_DatabaseSchema(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.database_schema = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.database_schema = {"entities": [], "sql_schema": "-- Could not generate schema", "relationships": []}
-        return ctx

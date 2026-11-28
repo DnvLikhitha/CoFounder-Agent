@@ -3,7 +3,7 @@ Layer 2: Agent 6 — MVP Roadmap Planner (parallel-eligible)
 Breaks MVP into 3 sprints with tasks, owners, and dependencies.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are an Agile Product Manager at a lean startup. Budget is $0. Team is 1-2 developers.
@@ -68,9 +68,8 @@ Output EXACTLY this JSON:
 
 class Agent6_MVPRoadmap(BaseAgent):
     name = "Agent6_MVPRoadmap"
-    layer = 2
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         product = ctx.product_design
         must_haves = [f.get("feature", "") for f in product.get("must_have_features", [])[:5]]
@@ -82,11 +81,3 @@ class Agent6_MVPRoadmap(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.mvp_roadmap = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.mvp_roadmap = {"sprints": [], "total_weeks": 6}
-        return ctx

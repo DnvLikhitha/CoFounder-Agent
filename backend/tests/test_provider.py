@@ -94,7 +94,7 @@ class ProviderTests(IsolatedAsyncioTestCase):
 
     async def test_hung_transport_times_out_and_retains_reservations_for_all_attempts(self):
         self.replies = ["hang"] * 3
-        with patch("backend.llm.client.ATTEMPT_TIMEOUT", 0.5), patch("backend.llm.client.uniform", return_value=0):
+        with patch("backend.llm.client.ATTEMPT_TIMEOUT", 1.5), patch("backend.llm.client.uniform", return_value=0):
             with self.assertRaises(ProviderTimeout):
                 await self.client.complete("private prompt")
         self.assertEqual(len(self.requests), 3)
