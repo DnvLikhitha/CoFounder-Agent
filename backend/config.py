@@ -24,20 +24,9 @@ class Settings(BaseSettings):
     # External tools
     serpapi_api_key: str = Field(default="", env="SERPAPI_API_KEY")
     fred_api_key: str = Field(default="", env="FRED_API_KEY")
-    google_ai_api_key: str = Field(default="", env="GOOGLE_AI_API_KEY")
-    cerebras_api_key: str = Field(default="", env="CEREBRAS_API_KEY")
 
-    # Supabase
-    supabase_url: str = Field(default="", env="SUPABASE_URL")
-    supabase_anon_key: str = Field(default="", env="SUPABASE_ANON_KEY")
-
-    # Redis
-    redis_url: str = Field(default="redis://localhost:6379", env="REDIS_URL")
-
-    # JWT Auth
-    jwt_secret: str = Field(default="changeme", env="JWT_SECRET")
-    jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")
-    jwt_expire_minutes: int = Field(default=1440, env="JWT_EXPIRE_MINUTES")
+    # Supabase Auth
+    supabase_url: str = ""
 
     # App
     environment: str = Field(default="development", env="ENVIRONMENT")
@@ -54,17 +43,22 @@ class Settings(BaseSettings):
     v1_jwt_secret: str = ""
     v1_jwt_issuer: str = "cofounder-agent"
     v1_jwt_audience: str = "cofounder-api"
-    cors_origins: str = Field(default="http://localhost:3000", env="CORS_ORIGINS")
+    cors_origins: str = Field(default="http://localhost:5173", env="CORS_ORIGINS")
 
     @property
     def production(self) -> bool:
         return self.environment.strip().lower() not in {"development", "local", "test"}
 
     @property
+    def uses_supabase(self) -> bool:
+        return self.production or bool(self.supabase_url)
+
+    @property
     def supabase_issuer(self) -> str:
         url = self.supabase_url.rstrip("/")
-        if not self.is_origin(url, https_only=True):
-            raise ValueError("SUPABASE_URL must be an HTTPS origin")
+        if not self.is_origin(url, https_only=self.production) or (
+                url.startswith("http://") and urlsplit(url).hostname not in {"localhost", "127.0.0.1", "::1"}):
+            raise ValueError("SUPABASE_URL must be an HTTPS origin or a loopback HTTP origin in development")
         return url + "/auth/v1"
 
     @staticmethod
@@ -100,7 +94,7 @@ class Settings(BaseSettings):
     def validate_api_configuration(self):
         self.require_v1_provider_mode()
         self.cors_origins_list
-        if self.production:
+        if self.uses_supabase:
             _ = self.supabase_issuer
         elif len(self.v1_jwt_secret) < 32:
             raise ValueError("V1_JWT_SECRET must be at least 32 characters for local authentication")

@@ -4,10 +4,11 @@ export function authConfig({ VITE_SUPABASE_URL: url, VITE_SUPABASE_PUBLISHABLE_K
   try {
     origin = new URL(url)
   } catch {
-    throw new Error('VITE_SUPABASE_URL must be the HTTPS Supabase project origin.')
+    throw new Error('VITE_SUPABASE_URL must be an HTTPS Supabase project origin or a loopback HTTP origin.')
   }
-  if (origin?.protocol !== 'https:' || (url !== origin.origin && url !== `${origin.origin}/`)) {
-    throw new Error('VITE_SUPABASE_URL must be the HTTPS Supabase project origin.')
+  const local = origin.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)
+  if ((!local && origin.protocol !== 'https:') || (url !== origin.origin && url !== `${origin.origin}/`)) {
+    throw new Error('VITE_SUPABASE_URL must be an HTTPS Supabase project origin or a loopback HTTP origin.')
   }
   if ((!key && !anon) || (key && !/^sb_publishable_[\w-]+$/.test(key)) || (anon && !isAnonKey(anon))) {
     throw new Error('Configure a Supabase publishable key or a legacy anon key for browser sign-in.')

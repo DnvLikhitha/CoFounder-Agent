@@ -1,8 +1,8 @@
 """
 export/pdf_generator.py — Generate stylized PDF startup plan using ReportLab
 """
-from backend.context import RunContext
-from backend.agents.investor_metrics import investor_metrics
+from backend.context import ReportData
+from backend.agents.investor_metrics import format_metric, investor_metrics
 from html import escape
 import io
 from reportlab.lib.pagesizes import letter
@@ -107,7 +107,7 @@ def add_pitch_deck(story, styles, slides):
         story.append(Spacer(1, 0.1 * inch))
 
 
-async def generate_pdf(ctx: RunContext, *, notice="") -> bytes:
+async def generate_pdf(ctx: ReportData, *, notice="") -> bytes:
     """Generate a complete PDF startup plan."""
     buffer = io.BytesIO()
     idea = ctx.startup_idea
@@ -370,8 +370,12 @@ async def generate_pdf(ctx: RunContext, *, notice="") -> bytes:
     ])
     architecture = ctx.tech_architecture
     if architecture:
-        add_section(story, styles, "Technical Architecture", [architecture["architecture_description"],
-                    f"Frontend: {architecture['frontend_stack']['framework']}. Backend: {architecture['backend_stack']['framework']}."])
+        infra_cost = format_metric(architecture.get("estimated_monthly_infra_cost_usd"), "${:,.2f}/month")
+        add_section(story, styles, "Technical Architecture", [
+            architecture["architecture_description"],
+            f"Frontend: {architecture['frontend_stack']['framework']}. Backend: {architecture['backend_stack']['framework']}.",
+            f"Estimated infrastructure cost: {infra_cost}.",
+        ])
     schema = ctx.database_schema
     if schema:
         add_section(story, styles, "Database Schema", [

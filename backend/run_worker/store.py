@@ -269,11 +269,6 @@ class Store:
             if renewed is None:
                 raise LostClaim()
 
-    def workflow(self, run_id, token):
-        with self._claimed(run_id, token) as (connection, snapshot):
-            manifest = snapshot["manifest"]
-            return manifest["version"], manifest["steps"], {s["step_id"]: s["status"] for s in snapshot["steps"]}
-
     def live_configuration(self, run_id, token):
         with self._claimed(run_id, token) as (connection, _):
             return connection.execute(
@@ -325,7 +320,9 @@ class Store:
 
     def graph_step_outcome(self, run_id, token, step_id):
         with self._claimed(run_id, token) as (connection, snapshot):
-            spec = workflow.LIVE_STEPS[step_id]
+            version = snapshot["manifest"]["version"]
+            spec = workflow.WORKFLOWS[version][step_id]
+            definition = next(step for step in snapshot["manifest"]["steps"] if step["step_id"] == step_id)
             states = {step["step_id"]: step for step in snapshot["steps"]}
             step = states[step_id]
             if step["status"] not in STEP_TERMINAL:
@@ -340,8 +337,8 @@ class Store:
                 raise StoreError(409, "state_conflict", "Graph step artifact is inconsistent")
             outcome = {
                 "status": step["status"], "error": step["error"], "artifact": artifact["reference"] if artifact else None,
-                "required": {key: states[key]["status"] for key in spec.required},
-                "optional": {key: states[key]["status"] for key in spec.optional},
+                "required": {key: states[key]["status"] for key in definition["depends_on"]},
+                "optional": {key: states[key]["status"] for key in spec.optional if key in states},
                 "research_artifact_id": ref["artifact_id"] if artifact and artifact["research"] else None,
                 "assumptions_artifact_id": ref["artifact_id"] if artifact and artifact["assumptions"] else None,
             }

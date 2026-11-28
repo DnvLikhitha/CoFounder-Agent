@@ -20,7 +20,7 @@ from backend.run_worker.ledger import BudgetExceeded
 from backend.run_worker.provider_call import ClaimCalls
 from backend.run_worker.store import LostClaim
 from backend.run_worker.workflow import (
-    REVIEWED_VERSION, LIVE_STEPS, InvalidOutput, PartialOutput, ProviderFailure, ProviderTimeout,
+    GRAPH_VERSIONS, LIVE_VERSION, REVIEWED_VERSION, LIVE_STEPS, WORKFLOWS, InvalidOutput, PartialOutput, ProviderFailure, ProviderTimeout,
     check_graph, validate_output,
 )
 
@@ -105,9 +105,19 @@ def route_pricing_decision(state: RunGraphState):
     return FINANCIALS if state["review"]["recompute"] else APPROVED_FORECAST
 
 
-def build_graph(run_node: Callable, checkpointer=None, *, steps=LIVE_STEPS, reviewed=False):
-    dependencies = {name: tuple(dict.fromkeys(spec.required + spec.optional)) for name, spec in steps.items()}
+def build_graph(run_node: Callable, checkpointer=None, *, steps=LIVE_STEPS, reviewed=False, historical=None):
+    dependencies = (historical if historical is not None else
+                    {name: tuple(dict.fromkeys(spec.required + spec.optional)) for name, spec in steps.items()})
     check_graph(dependencies)
+    graph = StateGraph(RunGraphState)
+    for step in dependencies:
+        graph.add_node(step, partial(run_node, step))
+    if historical is not None:
+        for step, upstream in dependencies.items():
+            graph.add_edge(list(upstream) if upstream else START, step)
+        for leaf in dependencies.keys() - {key for deps in dependencies.values() for key in deps}:
+            graph.add_edge(leaf, END)
+        return graph.compile(checkpointer=checkpointer)
     # Pricing is the last prerequisite for financials, including all alternate ancestors.
     # Keep the pricing review conditional edge as the single trigger for financials.
     ancestors = set()
@@ -120,9 +130,6 @@ def build_graph(run_node: Callable, checkpointer=None, *, steps=LIVE_STEPS, revi
     if PRICING not in dependencies[FINANCIALS] or set(dependencies[FINANCIALS]) - ancestors - {PRICING}:
         raise ValueError("Financial prerequisites must precede the pricing checkpoint")
 
-    graph = StateGraph(RunGraphState)
-    for step in steps:
-        graph.add_node(step, partial(run_node, step))
     graph.add_node(REVIEW, review_pricing_and_forecast if reviewed else review_pricing)
     if reviewed:
         graph.add_node(APPROVED_FORECAST, lambda state: {})
@@ -278,17 +285,25 @@ def execute_graph(store, claim, config, invoke_provider, calls, *, lease_seconds
         "prompt_version": config["prompt_version"], "model_profile": config["model_profile"],
         "provider_mode": config["graph_mode"],
     }
-    # A graph is compiled against its frozen manifest. A different topology needs a new version.
-    expected = {step: list(spec.required) for step, spec in LIVE_STEPS.items()}
-    if {step["step_id"]: step["depends_on"] for step in config["manifest"]["steps"]} != expected:
-        raise ValueError("Pinned graph manifest does not match the registered graph")
+    frozen = {step["step_id"]: step["depends_on"] for step in config["manifest"]["steps"]}
+    historical = None
+    if version in GRAPH_VERSIONS:
+        expected = {step: list(spec.required) for step, spec in LIVE_STEPS.items()}
+        if frozen != expected:
+            raise ValueError("Pinned graph manifest does not match the registered graph")
+    else:
+        # Pre-checkpoint runs use their frozen required edges. Only historical live jobs
+        # waited for optional producers; old demos merely consumed already available inputs.
+        historical = {step: tuple(dict.fromkeys(tuple(required) + (
+            WORKFLOWS[version][step].optional if version == LIVE_VERSION else ())))
+            for step, required in frozen.items()}
     thread_config = {"configurable": {"thread_id": run_id}, "max_concurrency": settings.v1_step_concurrency}
     node = partial(run_agent_node, database=store, claim=claim, invoke_provider=invoke_provider, judge=judge, calls=calls)
     with maintain_lease(store, claim, lease_seconds, heartbeat_mode, calls), \
          store.connect(autocommit=True, prepare_threshold=0) as connection, tracing_context(enabled=False):
         if not checkpoint_schema_ready(connection):
             raise ValueError("Checkpoint schema is not ready")
-        graph = build_graph(node, ClaimCheckpointer(connection, run_id, token), reviewed=reviewed)
+        graph = build_graph(node, ClaimCheckpointer(connection, run_id, token), reviewed=reviewed, historical=historical)
         snapshot = graph.get_state(thread_config)
         if snapshot.created_at is None:
             result = graph.invoke({**identity, "outcomes": {}, "review_pricing": config["pricing_review"] if reviewed else review},

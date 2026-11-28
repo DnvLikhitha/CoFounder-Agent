@@ -3,11 +3,10 @@ Layer 1: Agent 2 — Market Research Analyst
 Estimates market size, growth, and dynamics like a McKinsey analyst.
 Uses SerpAPI for market data + FRED for macro economic indicators.
 """
-from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.agents.base import BaseAgent, Research, source_urls
+from backend.context import AgentInputs
 from backend.tools.search import search_web
 from backend.tools.fred_client import fetch_fred_data
-import re
 
 
 PROMPT_TEMPLATE = """You are a Senior Market Research Analyst at McKinsey & Company.
@@ -57,28 +56,17 @@ List only sources available in the input. Use null for values that cannot be est
 
 class Agent2_MarketResearch(BaseAgent):
     name = "Agent2_MarketResearch"
-    layer = 1
 
-    async def fetch_research(self, ctx: RunContext) -> str:
-        idea = ctx.startup_idea
-        startup = idea.get("startup_name", "startup")
+    async def fetch_research(self, ctx: AgentInputs) -> Research:
         domain = ctx.domain or "market"
         search_q = f"{domain} market size TAM SAM 2024 2025"
         search_res = await search_web(search_q, num_results=5, caller=self.name)
         fred_res = await fetch_fred_data(caller=self.name)
         parts = [p for p in [search_res, fred_res] if p]
-        # Store deterministic evidence (SerpAPI links + FRED snippet) into ctx for later merge into agent output.
-        serp_sources = re.findall(r"Source:\s*(https?://\S+)", search_res or "")
-        serp_sources = list(dict.fromkeys(serp_sources))  # unique, preserve order
-        if not hasattr(ctx, "_tool_evidence_by_agent"):
-            ctx._tool_evidence_by_agent = {}
-        ctx._tool_evidence_by_agent[self.name] = {
-            "serpapi_sources": serp_sources,
-            "fred_data": fred_res,
-        }
-        return "\n\n".join(parts) if parts else ""
+        sources = source_urls(search_res)
+        return Research("\n\n".join(parts), {"serpapi_sources": sources, "fred_data": fred_res})
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         block = f"\nExternal Research (use to ground your estimates):\n{external_research}\n" if external_research else ""
         return PROMPT_TEMPLATE.format(
@@ -91,23 +79,3 @@ class Agent2_MarketResearch(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        evidence = {}
-        if hasattr(ctx, "_tool_evidence_by_agent"):
-            evidence = ctx._tool_evidence_by_agent.get(self.name, {}) or {}
-        if evidence:
-            parsed["tool_evidence"] = evidence
-        ctx.market_research = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.market_research = {
-            "tam_usd_billions": None,
-            "sam_usd_billions": None,
-            "som_usd_millions": None,
-            "cagr_percent": None,
-            "market_trends": [],
-            "target_segments": [],
-        }
-        return ctx

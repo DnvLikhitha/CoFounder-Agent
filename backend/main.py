@@ -34,7 +34,7 @@ def ready():
         settings.validate_api_configuration()
         if not Store(settings.database_url).ready(settings.v1_provider_mode):
             raise StoreError(503, "service_unavailable", "Worker unavailable")
-        if settings.production:
+        if settings.uses_supabase:
             supabase_keys(settings.supabase_issuer).get()
     except (ValueError, psycopg.Error, StoreError):
         return JSONResponse({"status": "unready"}, status_code=503)

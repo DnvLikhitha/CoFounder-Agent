@@ -1,5 +1,7 @@
 # LangGraph migration for Prompt 12.5
 
+This document records an earlier candidate. See the [final local verification](final-project-verification.md) for the maintained application and current results.
+
 ## Architecture and audit
 
 This migration is based on `05b00d1`, which merged the worker hardening in PR #11. The mounted v1 API already supported Supabase Auth and owner isolation, idempotent submissions, PostgreSQL artifacts and public events, authenticated SSE replay, partial exports, an optional final executive-summary approval, and a fenced Groq attempt ledger. Evaluation records were `not_evaluated`. Browser production sign-in and automatic token refresh were still outside the backend. The old Next.js routers referenced `StartupOrchestrator` but were unmounted by the FastAPI entry point.

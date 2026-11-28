@@ -3,10 +3,9 @@ Layer 1: Agent 3 — Competitor Intelligence Agent
 Analyzes 5 real or closely analogous competitors and identifies market gaps.
 Uses SerpAPI to discover real competitors and their pricing.
 """
-from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.agents.base import BaseAgent, Research, source_urls
+from backend.context import AgentInputs
 from backend.tools.search import search_web
-import re
 
 
 PROMPT_TEMPLATE = """You are a Competitive Intelligence Analyst specializing in startup ecosystems.
@@ -52,24 +51,16 @@ Output EXACTLY this JSON:
 
 class Agent3_Competitors(BaseAgent):
     name = "Agent3_Competitors"
-    layer = 1
 
-    async def fetch_research(self, ctx: RunContext) -> str:
+    async def fetch_research(self, ctx: AgentInputs) -> Research:
         idea = ctx.startup_idea
         startup = idea.get("startup_name", "startup")
         domain = ctx.domain or "software"
         query = f"{startup} competitors alternatives {domain} pricing"
         search_res = await search_web(query, num_results=8, caller=self.name)
-        serp_sources = re.findall(r"Source:\s*(https?://\S+)", search_res or "")
-        serp_sources = list(dict.fromkeys(serp_sources))
-        if not hasattr(ctx, "_tool_evidence_by_agent"):
-            ctx._tool_evidence_by_agent = {}
-        ctx._tool_evidence_by_agent[self.name] = {
-            "serpapi_sources": serp_sources,
-        }
-        return search_res
+        return Research(search_res, {"serpapi_sources": source_urls(search_res)})
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         block = f"\nExternal Research (real competitors and pricing - use these when possible):\n{external_research}\n" if external_research else ""
         return PROMPT_TEMPLATE.format(
@@ -82,16 +73,3 @@ class Agent3_Competitors(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        evidence = {}
-        if hasattr(ctx, "_tool_evidence_by_agent"):
-            evidence = ctx._tool_evidence_by_agent.get(self.name, {}) or {}
-        if evidence:
-            parsed["tool_evidence"] = evidence
-        ctx.competitor_analysis = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.competitor_analysis = {"competitors": [], "market_gaps": [], "our_competitive_advantages": []}
-        return ctx

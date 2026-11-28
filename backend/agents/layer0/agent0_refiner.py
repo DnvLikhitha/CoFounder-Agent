@@ -3,7 +3,7 @@ Layer 0: Agent 0 — Problem Refiner
 Clarifies and enriches raw user input before passing to all other agents.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are an expert startup advisor and problem analyst.
@@ -44,9 +44,8 @@ Then output EXACTLY this JSON:
 
 class Agent0_Refiner(BaseAgent):
     name = "Agent0_Refiner"
-    layer = 0
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         return PROMPT_TEMPLATE.format(
             problem_raw=self.safe_text(ctx.problem_raw),
             domain=ctx.domain or "Not specified",
@@ -56,13 +55,3 @@ class Agent0_Refiner(BaseAgent):
     def parse_output(self, raw: str) -> dict:
         data = self.extract_json(raw)
         return data
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.problem_refined = parsed.get("problem_refined", ctx.problem_raw)
-        # Store enriched metadata in startup_idea placeholder temporarily
-        ctx.status["domain_confirmed"] = parsed.get("domain_confirmed", ctx.domain or "General")
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.problem_refined = ctx.problem_raw
-        return ctx

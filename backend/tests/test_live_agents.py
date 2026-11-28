@@ -12,8 +12,9 @@ from unittest.mock import AsyncMock, patch
 from os import getpid
 
 from backend import agents
+from backend.agents.base import Research
 from backend.config import Settings
-from backend.context import RunContext
+from backend.context import AgentInputs
 from backend.llm.profiles import STARTUP_PROMPTS_V1
 from backend.run_worker import live_agents
 from backend.run_worker.provider_call import ClaimCalls, call_with_deadline
@@ -88,7 +89,7 @@ class LiveAgentTests(unittest.TestCase):
 
     def test_prompt_fingerprint_rejects_changes_in_rendering_dependencies(self):
         changes = {
-            "backend/run_worker/prompts_v1.py": ('content["problem_refined"]', 'content["alternate_refinement"]'),
+            "backend/run_worker/prompts_v1.py": ('inputs["problem_refined"]["problem_refined"]', 'inputs["problem_refined"]["alternate_refinement"]'),
             "backend/context.py": ('problem_refined: str = ""', 'problem_refined: str = "Default refinement"'),
             "backend/agents/layer1/agent2_market.py": ('async def fetch_research', 'async def fetch_updated_research'),
             "backend/tools/search.py": ("--- Web Search Results ---", "--- Alternate Search Results ---"),
@@ -161,9 +162,9 @@ class LiveAgentTests(unittest.TestCase):
             call_with_deadline(invalid_provider, "pricing_strategy", {}, {}, 20, calls)
 
     def test_investor_prompts_keep_unavailable_metrics_explicit(self):
-        ctx = RunContext(problem_refined="A concrete problem")
+        ctx = AgentInputs(problem_refined="A concrete problem")
         for agent in (agents.Agent14_PitchDeck, agents.Agent15_ExecutiveSummary):
-            prompt = agent(None).build_prompt(ctx)
+            prompt = agent().build_prompt(ctx)
             self.assertIn("TAM Unavailable, SAM Unavailable, CAGR Unavailable", prompt)
             self.assertNotIn("Month 8", prompt)
             self.assertNotIn("$50K", prompt)
@@ -178,7 +179,7 @@ class LiveAgentTests(unittest.TestCase):
         pricing["founder_price_revision"] = {"tier_name": tier["tier_name"]}
         body = {"problem": "Find internships for university students."}
         llm = SimpleNamespace(complete=AsyncMock(return_value=json.dumps(fixture[step_id])))
-        with patch.object(LIVE_STEPS[step_id].agent, "fetch_research", new=AsyncMock(return_value="")):
+        with patch.object(LIVE_STEPS[step_id].agent, "fetch_research", new=AsyncMock(return_value=Research())):
             asyncio.run(live_agents.run_audited_forecast_agent(step_id, body, upstream, llm))
             reviewed = llm.complete.await_args.args[0]
             asyncio.run(live_agents.run_agent(step_id, body, upstream, llm))
@@ -188,6 +189,41 @@ class LiveAgentTests(unittest.TestCase):
         self.assertIn("tier_customers", reviewed)
         self.assertIn("pricing_assumptions", reviewed)
         self.assertNotIn('"price_annual_usd": 369.5', historical)
+
+    def test_finance_and_risk_regenerate_only_once_and_keep_strict_validation(self):
+        outputs = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        run_agent = live_agents.PROMPT_BUNDLES[live_agents.REVIEWED_PROMPT_VERSION].run_agent
+        founder_input = {"problem": "Find internships for university students."}
+        for kind in ("financial_projections", "risk_register"):
+            spec = LIVE_STEPS[kind]
+            upstream = {name: outputs[name] for name in spec.required}
+            valid = json.dumps(outputs[kind])
+            malformed = '{"monthly_projections": [' if kind == "financial_projections" else valid.replace(
+                '"probability": "medium"', '"probability": "Medium"').replace(
+                '"probability": "high"', '"probability": "High"').replace('"probability": "low"', '"probability": "Low"')
+            with self.subTest(kind=kind), patch.object(spec.agent, "fetch_research", new=AsyncMock(return_value=Research())) as research:
+                llm = SimpleNamespace(complete=AsyncMock(side_effect=[malformed, valid]))
+                result = asyncio.run(run_agent(kind, founder_input, upstream, llm))
+                validate_output(LIVE_VERSION, kind, result)
+                self.assertEqual(research.await_count, 1)
+                self.assertEqual(llm.complete.await_count, 2)
+                self.assertIn("Regenerate the entire JSON", llm.complete.await_args.args[0])
+                self.assertGreater(llm.complete.await_args.kwargs["max_tokens"], 4096)
+                llm.complete = AsyncMock(return_value=malformed)
+                with self.assertRaises(InvalidOutput):
+                    asyncio.run(run_agent(kind, founder_input, upstream, llm))
+                self.assertEqual(llm.complete.await_count, 2)
+
+    def test_supabase_loopback_is_available_in_development_with_asymmetric_auth(self):
+        cfg = Settings(_env_file=None, supabase_url="http://127.0.0.1:55451", environment="development")
+        self.assertTrue(cfg.uses_supabase)
+        self.assertEqual(cfg.supabase_issuer, "http://127.0.0.1:55451/auth/v1")
+        for origin, environment in [("http://example.test", "development"),
+                                    ("http://127.0.0.1:55451", "production")]:
+            with self.subTest(origin=origin, environment=environment):
+                cfg = Settings(_env_file=None, supabase_url=origin, environment=environment)
+                with self.assertRaises(ValueError):
+                    _ = cfg.supabase_issuer
 
     def test_settings_require_explicit_mode_and_groq_credentials(self):
         for mode, key, environment, error in [

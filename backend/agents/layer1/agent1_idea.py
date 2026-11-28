@@ -3,8 +3,8 @@ Layer 1: Agent 1 — Startup Idea Generator
 Generates 3 startup concepts and selects the strongest one.
 Uses SerpAPI to validate similar startups exist and find naming conflicts.
 """
-from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.agents.base import BaseAgent, Research, source_urls
+from backend.context import AgentInputs
 from backend.tools.search import search_web
 
 
@@ -42,13 +42,13 @@ For your selected idea, output EXACTLY this JSON:
 
 class Agent1_IdeaGenerator(BaseAgent):
     name = "Agent1_IdeaGenerator"
-    layer = 1
 
-    async def fetch_research(self, ctx: RunContext) -> str:
+    async def fetch_research(self, ctx: AgentInputs) -> Research:
         query = f"startups solving {ctx.problem_refined or ctx.problem_raw[:100]} {ctx.domain or ''}"
-        return await search_web(query, num_results=5, caller=self.name)
+        text = await search_web(query, num_results=5, caller=self.name)
+        return Research(text, {"serpapi_sources": source_urls(text)})
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         block = f"\nExternal Research (use to validate ideas, avoid naming conflicts):\n{external_research}\n" if external_research else ""
         return PROMPT_TEMPLATE.format(
             problem_refined=ctx.problem_refined or ctx.problem_raw,
@@ -59,20 +59,3 @@ class Agent1_IdeaGenerator(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.startup_idea = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.startup_idea = {
-            "startup_name": "StartupAI",
-            "tagline": "AI-powered solution",
-            "one_liner": "We solve this problem with AI.",
-            "value_proposition": "Fast and easy solution",
-            "target_customer": "Early adopters",
-            "key_differentiator": "AI-powered",
-            "unfair_advantage": "First mover",
-            "business_type": "B2B",
-        }
-        return ctx

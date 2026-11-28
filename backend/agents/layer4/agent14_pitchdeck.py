@@ -4,7 +4,7 @@ Writes all 12 slides of an investor pitch deck.
 """
 from backend.agents.base import BaseAgent
 from backend.agents.investor_metrics import investor_metrics
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are a world-class pitch deck coach who has reviewed 1,000+ YC applications and helped raise $500M+.
@@ -49,9 +49,8 @@ Include all 12 slides:
 
 class Agent14_PitchDeck(BaseAgent):
     name = "Agent14_PitchDeck"
-    layer = 4
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         biz = ctx.business_model
@@ -83,11 +82,3 @@ class Agent14_PitchDeck(BaseAgent):
         if isinstance(slides, list):
             return {"slides": slides}
         return slides
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.pitch_deck = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.pitch_deck = {"slides": []}
-        return ctx

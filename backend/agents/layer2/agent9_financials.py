@@ -3,9 +3,9 @@ Layer 2: Agent 9 — Financial Projection Analyst (parallel-eligible)
 Builds 12-month P&L projection with unit economics.
 Uses FRED for interest rates, inflation, and macro context.
 """
-from backend.agents.base import BaseAgent
+from backend.agents.base import BaseAgent, Research
 from backend.agents.investor_metrics import format_metric
-from backend.context import RunContext
+from backend.context import AgentInputs
 from backend.tools.fred_client import fetch_fred_data
 
 
@@ -79,18 +79,12 @@ Use null for unavailable summary metrics.
 
 class Agent9_Financials(BaseAgent):
     name = "Agent9_Financials"
-    layer = 2
 
-    async def fetch_research(self, ctx: RunContext) -> str:
+    async def fetch_research(self, ctx: AgentInputs) -> Research:
         fred_res = await fetch_fred_data(caller=self.name)
-        if not hasattr(ctx, "_tool_evidence_by_agent"):
-            ctx._tool_evidence_by_agent = {}
-        ctx._tool_evidence_by_agent[self.name] = {
-            "fred_data": fred_res,
-        }
-        return fred_res
+        return Research(fred_res, {"fred_data": fred_res})
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         biz = ctx.business_model
@@ -112,16 +106,3 @@ class Agent9_Financials(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        evidence = {}
-        if hasattr(ctx, "_tool_evidence_by_agent"):
-            evidence = ctx._tool_evidence_by_agent.get(self.name, {}) or {}
-        if evidence:
-            parsed["tool_evidence"] = evidence
-        ctx.financial_projections = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.financial_projections = {"monthly_projections": [], "breakeven_month": None}
-        return ctx

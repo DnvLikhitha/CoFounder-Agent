@@ -4,7 +4,7 @@ Synthesizes everything into a 1-page investor memo.
 """
 from backend.agents.base import BaseAgent
 from backend.agents.investor_metrics import investor_metrics
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are Paul Graham's writing assistant. Write like Paul Graham — clear, direct, no fluff.
@@ -53,9 +53,8 @@ Output EXACTLY this JSON (Don't mention any other things):
 
 class Agent15_ExecutiveSummary(BaseAgent):
     name = "Agent15_ExecutiveSummary"
-    layer = 4
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         biz = ctx.business_model
@@ -86,15 +85,3 @@ class Agent15_ExecutiveSummary(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.executive_summary = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.executive_summary = {
-            "executive_summary": "Executive summary generation failed. Please try again.",
-            "one_liner": ctx.startup_idea.get("one_liner", ""),
-            "key_metrics_snapshot": {},
-        }
-        return ctx

@@ -3,7 +3,7 @@ Layer 2: Agent 7 — Business Model Strategist (parallel-eligible)
 Designs monetization model and go-to-market strategy.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are a Business Model Strategist who has designed GTM strategies for 50+ startups.
@@ -52,9 +52,8 @@ Output EXACTLY this JSON:
 
 class Agent7_BusinessModel(BaseAgent):
     name = "Agent7_BusinessModel"
-    layer = 2
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         market = ctx.market_research
         comp = ctx.competitor_analysis
@@ -71,11 +70,3 @@ class Agent7_BusinessModel(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.business_model = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.business_model = {"revenue_streams": [], "gtm_phases": []}
-        return ctx

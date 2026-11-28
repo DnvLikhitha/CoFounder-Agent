@@ -3,7 +3,7 @@ Layer 3: Agent 11 — Tech Architecture Designer
 Designs the full tech stack and system architecture.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are a Senior Software Architect at a YC-backed startup with a $0 infrastructure budget.
@@ -68,9 +68,8 @@ Output EXACTLY this JSON:
 
 class Agent11_TechArchitecture(BaseAgent):
     name = "Agent11_TechArchitecture"
-    layer = 3
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         product = ctx.product_design
         market = ctx.market_research
@@ -86,14 +85,3 @@ class Agent11_TechArchitecture(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.tech_architecture = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.tech_architecture = {
-            "frontend_stack": {"framework": "Next.js", "hosting": "Vercel"},
-            "backend_stack": {"framework": "FastAPI", "hosting": "Railway"},
-        }
-        return ctx

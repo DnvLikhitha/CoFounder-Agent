@@ -34,6 +34,8 @@ test('browser configuration accepts public keys and rejects privileged keys and 
   const anon = { VITE_SUPABASE_URL: env.VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY: jwt('anon') }
   assert.equal(authConfig(anon).key, anon.VITE_SUPABASE_ANON_KEY)
   assert.throws(() => authConfig({ ...anon, VITE_SUPABASE_ANON_KEY: jwt('service_role') }), /publishable key/)
+  assert.equal(authConfig({ ...env, VITE_SUPABASE_URL: 'http://127.0.0.1:54321' }).url,
+    'http://127.0.0.1:54321')
   assert.throws(() => authConfig({ ...env, VITE_SUPABASE_URL: 'http://project.supabase.co' }), /HTTPS/)
 })
 

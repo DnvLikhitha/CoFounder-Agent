@@ -73,8 +73,8 @@ def supabase_keys(issuer):
 
 def owner(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
     try:
-        issuer = settings.supabase_issuer if settings.production else settings.v1_jwt_issuer
-        if not settings.production and len(settings.v1_jwt_secret) < 32:
+        issuer = settings.supabase_issuer if settings.uses_supabase else settings.v1_jwt_issuer
+        if not settings.uses_supabase and len(settings.v1_jwt_secret) < 32:
             raise ValueError("Missing local authentication key")
     except ValueError:
         raise StoreError(503, "service_unavailable", "Authentication is not configured") from None
@@ -82,7 +82,7 @@ def owner(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(be
         raise StoreError(401, "unauthorized", "Bearer token required")
     token = credentials.credentials
     try:
-        if settings.production:
+        if settings.uses_supabase:
             header = jwt.get_unverified_header(token)
             alg, kid = header.get("alg"), header.get("kid")
             if not isinstance(alg, str) or alg not in ALGORITHMS or not isinstance(kid, str) or not 1 <= len(kid) <= 200:

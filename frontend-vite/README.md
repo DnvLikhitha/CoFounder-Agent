@@ -1,6 +1,6 @@
 # CoFounder Agent run UI
 
-This standalone Vite + React JavaScript app sits alongside `frontend/`. It consumes v1 schemas and fixtures directly from `shared/contracts/`.
+The Vite + React JavaScript workspace uses the durable v1 API and reads schemas and fixtures directly from `shared/contracts/`.
 
 ## Run locally
 
@@ -21,7 +21,7 @@ Use an API configured to validate Supabase user JWTs and a provisioned Supabase 
 Set the public browser settings in `frontend-vite/.env.live.local` or the build environment.
 
 ```dotenv
-VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_URL=http://127.0.0.1:54321
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_public_key
 ```
 
@@ -78,7 +78,6 @@ See the [React cutover readiness report](RELEASE_READINESS.md) for the tested ca
 
 Provide an existing successful live-provider run owned by a synthetic test account. Set `LIVE_API_ORIGIN`, `LIVE_SUPABASE_URL`, `LIVE_SUPABASE_PUBLISHABLE_KEY` (or `LIVE_SUPABASE_ANON_KEY`), `LIVE_TEST_EMAIL`, `LIVE_TEST_PASSWORD`, and `LIVE_RUN_ID` in the verification process environment. Run `npm.cmd run verify:live` from `frontend-vite`. The verifier signs in, reads the snapshot and each immutable artifact, and reports the result per agent. It submits no runs and makes no model calls.
 
-### Shared contract follow-ups
+### Local full-stack verification
 
-- Verify downloads, SSE reconnect, and account isolation through the staging ingress with the migrated worker and production identity provider.
-- Review the pricing edit, second approval, forecast replacement, and contract changes together before release. The shared `revised` fixture exercises both reviews, history, and reconnect at every event cursor.
+Use the [repository setup](../README.md#run-locally-on-windows) to run React with Supabase Auth, FastAPI, PostgreSQL, and the worker. Fake-provider mode runs the full graph and labels deterministic data in reports. See the [verification report](../docs/final-project-verification.md) for the results and remaining checks.

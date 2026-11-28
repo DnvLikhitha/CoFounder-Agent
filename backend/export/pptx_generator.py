@@ -9,7 +9,7 @@ from io import BytesIO
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-from backend.context import RunContext
+from backend.context import ReportData
 
 
 def _add_title(slide, title: str) -> None:
@@ -71,7 +71,7 @@ def _add_footer(slide, text: str) -> None:
     p.runs[0].font.size = Pt(10)
 
 
-def generate_pptx(ctx: RunContext, *, notice="") -> bytes:
+def generate_pptx(ctx: ReportData, *, notice="") -> bytes:
     """
     Generate a pitch deck PPTX from ctx.pitch_deck.slides (Agent14 output).
     """

@@ -11,13 +11,15 @@ from backend.run_worker.ledger import AttemptLedger
 from backend.run_worker.prompt_fingerprint import startup_v1_fingerprint
 from backend.run_worker.prompts_reviewed_v1 import run_agent as run_reviewed_agent
 from backend.run_worker.prompts_reviewed_v2 import run_agent as run_audited_forecast_agent
+from backend.run_worker.prompts_reviewed_v3 import run_agent as run_recoverable_agent
 from backend.run_worker.prompts_v1 import run_agent
 
 
-PROMPT_FINGERPRINT = "f1302b85226ffdb0840ed8f2f7eae514e32383e131756e9aae2946fdfd6ff7f9"
+PROMPT_FINGERPRINT = "a4184e235967fd53ef25c9968d2e094dd67c3711af7bf579205bd68d0307f917"
 PRIOR_REVIEWED_PROMPT_VERSION = "startup-reviewed-prompts-v1"
-REVIEWED_PROMPT_VERSION = "startup-reviewed-prompts-v2"
-REVIEWED_PROMPT_FINGERPRINT = "8f521e399c96ff32896569dc7b2613b75cfcc7752d384ff4bb52badf38575179"
+AUDITED_FORECAST_PROMPT_VERSION = "startup-reviewed-prompts-v2"
+REVIEWED_PROMPT_VERSION = "startup-reviewed-prompts-v3"
+REVIEWED_PROMPT_FINGERPRINT = "ef97742899b6874a7e7ef82a0d2ccfb89d52d620743d9ae02cf5a6cfe2b7352b"
 AgentRenderer = Callable[..., Awaitable[object]]
 
 
@@ -34,8 +36,9 @@ PROMPT_BUNDLES = MappingProxyType({
     STARTUP_PROMPTS_V1: PromptBundle(SYSTEM_PROMPT, run_agent, startup_v1_fingerprint, PROMPT_FINGERPRINT),
     PRIOR_REVIEWED_PROMPT_VERSION: PromptBundle(SYSTEM_PROMPT, run_reviewed_agent,
                                          startup_v1_fingerprint, REVIEWED_PROMPT_FINGERPRINT),
-    REVIEWED_PROMPT_VERSION: PromptBundle(SYSTEM_PROMPT, run_audited_forecast_agent,
-                                         startup_v1_fingerprint, "d8858603c83bacbeeb8cb3756d9c42cd77a2bb177ff4e60e0b406255aea4d093"),
+    AUDITED_FORECAST_PROMPT_VERSION: PromptBundle(SYSTEM_PROMPT, run_audited_forecast_agent,
+                                         startup_v1_fingerprint, "0e3e14af4696274542367faebe47474f2cdae31a2e1e8786f75f788898e668a7"),
+    REVIEWED_PROMPT_VERSION: PromptBundle(SYSTEM_PROMPT, run_recoverable_agent, startup_v1_fingerprint, "6c2f7b1a040f648612def2d5680ad0edcb29d0428b413442470709ada74f9e20"),
 })
 
 

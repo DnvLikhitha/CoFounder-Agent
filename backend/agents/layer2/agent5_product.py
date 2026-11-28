@@ -3,7 +3,7 @@ Layer 2: Agent 5 — Product Designer
 Defines core features, UX flows, and design principles.
 """
 from backend.agents.base import BaseAgent
-from backend.context import RunContext
+from backend.context import AgentInputs
 
 
 PROMPT_TEMPLATE = """You are a Senior Product Designer who has shipped 10+ SaaS products.
@@ -58,9 +58,8 @@ Output EXACTLY this JSON:
 
 class Agent5_ProductDesigner(BaseAgent):
     name = "Agent5_ProductDesigner"
-    layer = 2
 
-    def build_prompt(self, ctx: RunContext, external_research: str = "") -> str:
+    def build_prompt(self, ctx: AgentInputs, external_research: str = "") -> str:
         idea = ctx.startup_idea
         personas = ctx.customer_personas
         primary = personas[0].get("name", "Primary user") if personas else "Primary user"
@@ -75,11 +74,3 @@ class Agent5_ProductDesigner(BaseAgent):
 
     def parse_output(self, raw: str) -> dict:
         return self.extract_json(raw)
-
-    def write_to_context(self, ctx: RunContext, parsed: dict) -> RunContext:
-        ctx.product_design = parsed
-        return ctx
-
-    def write_fallback(self, ctx: RunContext) -> RunContext:
-        ctx.product_design = {"must_have_features": [], "should_have_features": [], "core_ux_flows": []}
-        return ctx

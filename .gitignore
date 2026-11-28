@@ -14,27 +14,15 @@ backend/.mypy_cache/
 backend/.ruff_cache/
 
 # ------------------------------
-# Frontend (Next.js / Node)
-# ------------------------------
-frontend/node_modules/
-frontend/.next/
-frontend/out/
-frontend/build/
-frontend/.vercel/
-frontend/.env
-frontend/.env.*
-frontend/coverage/
-frontend/*.tsbuildinfo
-frontend/next-env.d.ts
-frontend/.turbo/
-
-# ------------------------------
 # Repo-wide / OS / IDE
 # ------------------------------
 .DS_Store
 Thumbs.db
 *.pem
+supabase/signing_keys.json
+supabase/.temp/
 .vscode/
 .idea/
 .env
 .env.*
+!backend/.env.example
