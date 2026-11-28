@@ -38,6 +38,8 @@ The adapter makes at most three attempts per agent across claims. The SDK's retr
 
 Create a new profile version when changing models or prices. Register each new prompt renderer and its system prompt in `PROMPT_BUNDLES`. Retain earlier entries and their source code while unfinished runs reference them. Live workers verify every registered fingerprint at startup and claim only runs with supported workflow, profile, and prompt versions. They pass the stored prompt version to the provider process for both queued and reclaimed runs. Roll out workers that support the new version before switching the submission default.
 
+The v1 fingerprint covers the registered renderer, system prompt, live step dependencies, and the local source files reached through static imports. This includes context hydration, agent research, and the code that formats tool responses and chat messages. Credentials, live tool responses, and run inputs are supplied at runtime.
+
 ## React integration
 
 The existing v1 OpenAPI and SSE schemas already support variable-length manifests and arbitrary JSON artifact content. In live mode, derive labels, phase groups, and required dependency edges from the run's 16-step manifest. Each step's ID is also its artifact kind. `problem_refined` is an object carrying a `problem_refined` string, `customer_personas` is an array, and `pitch_deck` carries a `slides` array. The Groq response fixture in `backend/tests/fixtures/live_agent_outputs.json` exercises the original response shapes before normalization. Existing fake runs still have four steps. V1 exports render committed live content and include partial-result notices when steps fail. PPTX includes the generated slides and speaker notes when available.

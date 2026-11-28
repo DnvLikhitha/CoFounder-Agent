@@ -21,7 +21,7 @@ from backend.contracts.v1 import (
 )
 from backend.run_worker.auth import Owner, owner
 from backend.safe_logging import SafeRequests
-from backend.run_worker.live_agents import apply_artifact
+from backend.run_worker.prompts_v1 import apply_artifact
 from backend.run_worker.store import Store, StoreError, TERMINAL
 from backend.run_worker.workflow import FAKE_VERSIONS, LIVE_VERSION
 

@@ -69,6 +69,36 @@ class LiveAgentTests(unittest.TestCase):
     def test_versioned_prompt_bundle_matches_its_fingerprint(self):
         live_agents.verify_prompt_bundles()
 
+    def test_prompt_fingerprint_rejects_changes_in_rendering_dependencies(self):
+        changes = {
+            "backend/run_worker/prompts_v1.py": ('content["problem_refined"]', 'content["alternate_refinement"]'),
+            "backend/context.py": ('problem_refined: str = ""', 'problem_refined: str = "Default refinement"'),
+            "backend/agents/layer1/agent2_market.py": ('async def fetch_research', 'async def fetch_updated_research'),
+            "backend/tools/search.py": ("--- Web Search Results ---", "--- Alternate Search Results ---"),
+            "backend/tools/fred_client.py": ("Federal Funds Rate (%)", "Alternate Federal Funds Rate (%)"),
+            "backend/llm/messages.py": ('"role": "system"', '"role": "developer"'),
+        }
+        original_read = Path.read_text
+        for file, (before, after) in changes.items():
+            with self.subTest(file=file):
+                def changed_source(path, *args, **kwargs):
+                    source = original_read(path, *args, **kwargs)
+                    if path.as_posix().endswith("/" + file):
+                        self.assertIn(before, source)
+                        return source.replace(before, after, 1)
+                    return source
+
+                with patch.object(Path, "read_text", changed_source):
+                    with self.assertRaisesRegex(ValueError, "startup-prompts-v1.*recorded fingerprint"):
+                        live_agents.verify_prompt_bundles()
+
+    def test_prompt_fingerprint_validates_the_registered_system_prompt(self):
+        bundle = live_agents.PROMPT_BUNDLES[STARTUP_PROMPTS_V1]
+        changed = replace(bundle, system_prompt="A different system prompt")
+        with patch.object(live_agents, "PROMPT_BUNDLES", {STARTUP_PROMPTS_V1: changed}):
+            with self.assertRaisesRegex(ValueError, "startup-prompts-v1.*recorded fingerprint"):
+                live_agents.verify_prompt_bundles()
+
     def test_provider_dispatches_the_pinned_renderer_and_system_prompt(self):
         old = live_agents.PROMPT_BUNDLES[STARTUP_PROMPTS_V1]
         older_run = AsyncMock(return_value={"problem_refined": "Old render"})

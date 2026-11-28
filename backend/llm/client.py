@@ -10,6 +10,7 @@ from time import monotonic
 from groq import APIConnectionError, APIStatusError, APITimeoutError, AsyncGroq
 
 from backend.config import settings
+from backend.llm.messages import chat_messages
 from backend.llm.profiles import MAX_ATTEMPTS, PROFILES, PROFILE_VERSION, SYSTEM_PROMPT
 from backend.run_worker.ledger import BudgetExceeded
 from backend.run_worker.workflow import ProviderFailure, ProviderTimeout
@@ -66,13 +67,13 @@ class LLMClient:
     async def complete(self, prompt, agent_name="", *, temperature=0.7, max_tokens=4096):
         # These profiles share byte-level tokenization and text-only chat framing.
         # Reserve a byte per token plus framing for the two role messages.
-        prompt_bound = sum(len(message.encode("utf-8")) for message in (self.system_prompt, prompt)) + 256
+        messages = chat_messages(self.system_prompt, prompt)
+        prompt_bound = sum(len(message["content"].encode("utf-8")) for message in messages) + 256
         models = [model for model in self.models if max_tokens <= model.completion_tokens
                   and prompt_bound + max_tokens <= model.context_tokens]
         if not models:
             raise ProviderFailure()
         deadline = self.deadline if self.deadline is not None else monotonic() + settings.v1_provider_timeout_seconds
-        messages = [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": prompt}]
         history = self.ledger.history() if self.ledger else []
         previous = history[-1] if history else None
         if previous and previous["status"] in {"rejected", "failed"}:
