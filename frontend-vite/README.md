@@ -35,6 +35,19 @@ Supabase Auth manages the session in browser local storage and rotates its refre
 
 The browser uses relative `/api/v1` requests. The Vite dev server proxies them to `http://127.0.0.1:8000` by default. Set `API_PROXY_TARGET` in `frontend-vite/.env.live.local` or in the shell to use a different HTTP or HTTPS API origin.
 
+### Verify exports over local HTTPS
+
+If an authenticated PDF request stalls in Chromium over local HTTP, run the live dev server over HTTPS with a trusted development certificate for your local host. Supply the paths in the shell or in `.env.live.local` and restart Vite.
+
+```dotenv
+DEV_HTTPS_CERT=C:/path/to/local-cert.pem
+DEV_HTTPS_KEY=C:/path/to/local-key.pem
+```
+
+For HTTPS development, use Node 22.21.1 or later on the 22.x line, or Node 24. Node 22.21.0 crashes on secure WebSocket upgrades. [Node issue](https://github.com/nodejs/node/issues/60336)
+
+Open the HTTPS URL printed by Vite. The dev proxy still uses `API_PROXY_TARGET`. Keep the private key outside the repository.
+
 ## Checks and builds
 
 ```powershell
@@ -58,7 +71,7 @@ See the [React cutover readiness report](RELEASE_READINESS.md) for the tested ca
 - Live history follows the worker's owner-scoped v1 cursor. Enable `V1_REQUIRE_PRICING_REVIEW` to review draft pricing before investor outputs. The UI sends the selected artifact revision with each decision, supports editing one tier, and waits for the event carrying the replacement review. An HTTP 409 refreshes the snapshot. A separately enabled executive-summary review supports approval or rejection.
 - Run outputs link published source references, claims, and upstream artifact revisions. Revision history lets founders open older outputs and compare two versions side by side. After approval, the run labels downstream work that is regenerating and identifies the resulting revision from its input lineage.
 - Agent evaluations show the reported outcome, method, dimension explanations, and any evidence. Unevaluated outputs are labeled separately and do not display a score. Assumptions and uncertainty notes come from the artifact payload.
-- In live mode, each loaded artifact can be downloaded in its original media type. The UI also downloads server-generated Markdown, PDF, and PowerPoint for succeeded and partial runs.
+- In live mode, each loaded artifact can be downloaded in its original media type. The UI also downloads server-generated Markdown, PDF, and PowerPoint for succeeded and partial runs. You can cancel an export while it is preparing and use the Save link to save the prepared file again.
 - REST and fetch-based SSE use bearer headers. After a stream closes, the client obtains a fresh snapshot and opens the stream at its cursor using the current session. Forbidden, rate-limited, and unavailable responses produce distinct messages and preserve the session.
 
 ### Verify all 16 outputs on the live API
