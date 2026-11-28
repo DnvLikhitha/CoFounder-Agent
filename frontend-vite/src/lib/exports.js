@@ -1,14 +1,24 @@
 import { ProtocolError } from './run-state.js'
 
-export function saveDownload(blob, filename) {
-  const url = URL.createObjectURL(blob)
+export function startDownload(url, filename) {
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
   document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  try {
+    anchor.click()
+  } finally {
+    anchor.remove()
+  }
+}
+
+export function saveDownload(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  try {
+    startDownload(url, filename)
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
 }
 
 const formats = {

@@ -5,7 +5,7 @@ import { FounderReview } from './FounderReview.jsx'
 import { Evaluations, OutputSection } from './OutputSection.jsx'
 import { watchRun } from './lib/watch-run.js'
 import { summarizeProgress } from './lib/run-progress.js'
-import { saveDownload } from './lib/exports.js'
+import { startDownload } from './lib/exports.js'
 
 const initial = { snapshot: null, connection: 'loading', message: '' }
 
@@ -131,40 +131,68 @@ function ConnectionNotice({ connection, message, refresh }) {
   return null
 }
 
+const exportLabels = { markdown: 'Markdown', pdf: 'PDF', pptx: 'PowerPoint' }
+
 function Exports({ client, runId, partial }) {
   const pending = useRef(null)
-  const [state, setState] = useState({ format: null, error: '' })
-  useEffect(() => () => pending.current?.abort(), [])
+  const ready = useRef(null)
+  const [state, setState] = useState({})
+
+  useEffect(() => () => {
+    pending.current?.abort()
+    if (ready.current) URL.revokeObjectURL(ready.current)
+  }, [])
+
+  function cancel() {
+    const request = pending.current
+    pending.current = null
+    request?.abort()
+    setState({ message: 'Export canceled.' })
+  }
 
   async function download(format) {
     if (pending.current) return
+    const label = exportLabels[format]
     const request = new AbortController()
     pending.current = request
-    setState({ format, error: '' })
+    setState({ format, message: `Preparing ${label}…` })
     try {
       const { blob, filename } = await client.downloadExport(runId, format, { signal: request.signal })
       if (request.signal.aborted) return
-      saveDownload(blob, filename)
-      setState({ format: null, error: '' })
+      const url = URL.createObjectURL(blob)
+      if (ready.current) URL.revokeObjectURL(ready.current)
+      ready.current = url
+      const file = { url, filename }
+      setState({ file, message: `${label} is ready.` })
+      try {
+        startDownload(url, filename)
+      } catch {
+        setState({ file, error: 'The download did not start automatically. Use the Save link.' })
+      }
     } catch (error) {
-      if (!request.signal.aborted) setState({ format: null, error: error.message })
+      if (!request.signal.aborted) {
+        setState({ error: `Could not download ${label}. ${error.message}` })
+      }
     } finally {
-      pending.current = null
+      if (pending.current === request) pending.current = null
     }
   }
 
   return (
-    <section className="panel exports">
-      <h2>Export plan</h2>
+    <section className="panel exports" aria-labelledby="exports-heading">
+      <h2 id="exports-heading">Export plan</h2>
       {partial && <p className="muted">Exports contain the available results from this partial run.</p>}
       {client.supportsExports ? (
-        <div className="actions">
-          {Object.entries({ markdown: 'Markdown', pdf: 'PDF', pptx: 'PowerPoint' }).map(([format, label]) => (
-            <button key={format} disabled={state.format !== null} onClick={() => download(format)}>
-              {state.format === format ? 'Preparing…' : label}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="actions">
+            {Object.entries(exportLabels).map(([format, label]) => (
+              <button key={format} disabled={Boolean(state.format)} onClick={() => download(format)}>{label}</button>
+            ))}
+            {state.format && <button type="button" onClick={cancel}>Cancel export</button>}
+          </div>
+          <p className="muted export-status" role="status">{state.message}</p>
+          {state.file && <p><a href={state.file.url} download={state.file.filename}>Save {state.file.filename}</a></p>}
+        </>
       ) : <p className="muted">Downloads are available with the live API.</p>}
       {state.error && <p className="notice error" role="alert">{state.error}</p>}
     </section>

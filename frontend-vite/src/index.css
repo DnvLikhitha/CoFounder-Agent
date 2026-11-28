@@ -129,6 +129,7 @@ textarea { resize: vertical; }
 .review-artifact h4, .artifact-detail h4 { margin: 0 0 .4rem; }
 .review .actions, .revision-form .actions { margin-top: .65rem; }
 .evaluations, .exports { margin-top: 1rem; }
+.export-status:empty { margin: 0; }
 .evaluation-list p { margin: .2rem 0; }
 .reasons { padding-left: 1.25rem; }
 .score { color: var(--accent); }
