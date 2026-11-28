@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { mockMode } from './lib/index.js'
 import { createSubmissionKeys } from './lib/submission.js'
 
 const domains = ['General', 'SaaS', 'HealthTech', 'EdTech', 'FinTech', 'Marketplace', 'AI/ML', 'Consumer', 'B2B', 'Other']
 
-export function InputForm({ client, mockMode }) {
+export function InputForm({ client }) {
   const navigate = useNavigate()
   const pending = useRef(null)
   const [keys] = useState(createSubmissionKeys)
@@ -30,7 +31,7 @@ export function InputForm({ client, mockMode }) {
       domain: form.get('domain') || null,
       geography: form.get('geography').trim() || null,
     }
-    const scenario = form.get('scenario') ?? undefined
+    const scenario = mockMode ? form.get('scenario') : undefined
     try {
       const { run_id } = await client.startRun(input, {
         signal: request.signal, scenario, idempotencyKey: keys.get(input, scenario),

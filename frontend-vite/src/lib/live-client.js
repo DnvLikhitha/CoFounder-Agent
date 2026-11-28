@@ -6,18 +6,55 @@ import { ProtocolError } from './run-state.js'
 const runsPath = '/api/v1/runs'
 const runPath = (runId) => `${runsPath}/${encodeURIComponent(runId)}`
 
-export function createLiveClient(fetcher = globalThis.fetch, { accessToken, onUnauthorized } = {}) {
+const statusMessages = {
+  401: 'Your session expired or was rejected. Sign in again to continue.',
+  403: 'You do not have permission to access this resource.',
+  429: 'Too many requests. Wait before trying again.',
+}
+
+function parseRetryAfter(response) {
+  const value = response.headers.get('Retry-After')
+  if (!value) return undefined
+  if (/^\d+$/.test(value)) return Number(value) * 1000
+  const time = Date.parse(value)
+  return Number.isNaN(time) ? undefined : Math.max(0, time - Date.now())
+}
+
+export function createLiveClient(fetcher = globalThis.fetch, session) {
   async function request(path, options) {
-    const headers = { ...options?.headers }
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
-    const response = await fetcher(path, { cache: 'no-store', ...options, headers })
+    const signal = options?.signal
+    async function send(token) {
+      signal?.throwIfAborted()
+      const headers = { ...options?.headers }
+      if (token) headers.Authorization = `Bearer ${token}`
+      try {
+        return await fetcher(path, { ...options, cache: 'no-store', credentials: 'omit', redirect: 'error', headers })
+      } catch {
+        signal?.throwIfAborted()
+        throw new ApiError('The run API is unavailable. Try again shortly.', { status: 503, retryable: true })
+      }
+    }
+
+    signal?.throwIfAborted()
+    let token = await session?.getToken()
+    let response = await send(token)
+    if (session && response.status === 401) {
+      await response.body?.cancel()
+      signal?.throwIfAborted()
+      token = await session.recover(token)
+      response = await send(token)
+      if (response.status === 401 && !signal?.aborted) await session.reject(token)
+    }
     if (response.ok) return response
     const body = await response.json().catch(() => null)
-    if (response.status === 401 && !options?.signal?.aborted) onUnauthorized?.()
-    throw new ApiError(body?.error?.message ?? `API request failed (HTTP ${response.status}).`, {
+    const message = response.status >= 500
+      ? 'The run API is unavailable. Try again shortly.'
+      : statusMessages[response.status] ?? body?.error?.message ?? `API request failed (HTTP ${response.status}).`
+    throw new ApiError(message, {
       status: response.status,
       code: body?.error?.code,
-      retryable: body?.error?.retryable,
+      retryable: response.status >= 500 || response.status === 429 || body?.error?.retryable,
+      retryAfterMs: response.status === 429 ? parseRetryAfter(response) : undefined,
     })
   }
 
