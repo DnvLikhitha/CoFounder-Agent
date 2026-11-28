@@ -1,6 +1,6 @@
 # LangGraph migration for Prompt 12.5
 
-This document records an earlier candidate. See the [final local verification](final-project-verification.md) for the maintained application and current results.
+This document records an earlier candidate. See the [final local verification](../final-project-verification.md) for the maintained application and current results.
 
 ## Architecture and audit
 
@@ -153,7 +153,7 @@ PostgresSaver uses one direct psycopg connection for a claimed graph. Its additi
 
 ## Setup and testing
 
-Python 3.11 uses pinned `langgraph==1.2.24`, `langgraph-checkpoint==4.3.2`, `langgraph-checkpoint-postgres==3.2.1`, `psycopg[binary]==3.2.3`, and `psycopg-pool==3.3.3`. The worker uses local LangGraph and PostgreSQL. It needs no hosted orchestration account or tracing credentials. See the [worker runbook](../backend/run_worker/README.md) for database, JWT, and provider settings and how to submit a run.
+Python 3.11 uses pinned `langgraph==1.2.24`, `langgraph-checkpoint==4.3.2`, `langgraph-checkpoint-postgres==3.2.1`, `psycopg[binary]==3.2.3`, and `psycopg-pool==3.3.3`. The worker uses local LangGraph and PostgreSQL. It needs no hosted orchestration account or tracing credentials. See the [worker runbook](../../backend/run_worker/README.md) for database, JWT, and provider settings and how to submit a run.
 
 ```powershell
 python -m pip install -r backend/requirements.txt
