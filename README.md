@@ -69,42 +69,9 @@ The system consists of **16 specialized AI agents** organized into multiple laye
 
 ## Agent Workflow
 
-```text
-Problem Statement
-        │
-        ▼
-Problem Refiner
-        │
-        ▼
-Startup Idea Generator
-        │
-        ▼
-Market Research
-        │
-        ▼
-Competitor Analysis
-        │
-        ▼
-Customer Personas
-        │
-        ▼
-Product Design
-        │
- ┌──────┼─────────────────────┐
- ▼      ▼         ▼      ▼     ▼
-Roadmap Business Pricing Finance Risk
- │       │        │      │      │
- └───────┴────────┴──────┴──────┘
-                │
-                ▼
-      Architecture + DB + Security
-                │
-                ▼
-    Pitch Deck + Executive Summary
-                │
-                ▼
-      Complete Startup Blueprint
-```
+New v1 runs use a 16-agent LangGraph workflow with PostgreSQL checkpoints. The separate worker still claims runs, maintains its lease, and publishes the existing v1 artifacts and events. Development fake mode and production Groq mode execute the same graph.
+
+See the [architecture and dependency diagram](docs/langgraph-orchestration.md) and the [worker runbook](backend/run_worker/README.md) for setup and operating instructions.
 
 ---
 

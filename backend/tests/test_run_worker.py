@@ -20,6 +20,8 @@ from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi.testclient import TestClient
+from groq import APIStatusError
+from langgraph.checkpoint.postgres import PostgresSaver
 import httpx
 import jwt
 import psycopg
@@ -33,6 +35,8 @@ from backend.contracts.v1 import Artifact, EVENT_ADAPTER, RunSnapshot
 from backend.llm.profiles import PROFILES, PROFILE_VERSION, PROMPT_VERSION
 from backend.run_worker.api import app, store
 from backend.run_worker.auth import supabase_keys
+from backend.run_worker.checkpoints import ClaimCheckpointer
+from backend.run_worker.graph import build_graph, demo_provider, merge_outcomes
 from backend.run_worker.ledger import AttemptLedger, BudgetExceeded
 from backend.run_worker.live_agents import PROMPT_BUNDLES
 from backend.run_worker.provider_call import call_with_deadline
@@ -40,30 +44,16 @@ from backend.run_worker import workflow
 from backend.run_worker.store import LostClaim, Store, StoreError
 from backend.run_worker.worker import execute_claim
 from backend.run_worker.workflow import (
-    FAKE_VERSIONS, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure,
+    FAKE_VERSIONS, GRAPH_VERSION, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure, ProviderTimeout,
     fake_provider, validate_output,
 )
-from backend.tests.test_live_agents import FIXTURE, fixture_provider
+from backend.tests.test_live_agents import FIXTURE, FixtureGroq, fixture_provider, hang_during_pricing, wait_in_sibling_steps
 
 
 # Synchronization tests share threading Events and closures with the test process.
 # Other tests exercise the worker's production process boundary.
 def inline_call(provider, step_id, body, upstream, timeout, calls):
     return provider(step_id, body, upstream)
-
-
-def hang_during_pricing(step_id, body, upstream):
-    if step_id == "pricing_strategy":
-        Event().wait()
-    return fake_provider(step_id, body, upstream)
-
-
-def wait_in_sibling_steps(marker_dir, step_id, body, upstream):
-    if step_id in {"pricing_strategy", "risk_register"}:
-        (Path(marker_dir) / f"{os.getpid()}.started").touch()
-        while not (Path(marker_dir) / "release").exists():
-            time.sleep(0.05)
-    return fake_provider(step_id, body, upstream)
 
 
 class PricingValidationTests(unittest.TestCase):
@@ -131,6 +121,272 @@ class WorkerIntegrationTests(unittest.TestCase):
     def expire(self, run_id):
         with self.database.connect() as connection:
             connection.execute("UPDATE v1_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE run_id=%s", (run_id,))
+
+    def graph_run(self, key, mode="fake", **options):
+        return self.database.submit("alice", key, self.body, version=GRAPH_VERSION, graph_mode=mode, **options)
+
+    def test_langgraph_structure_includes_16_agents_and_validated_joins(self):
+        compiled = build_graph(lambda step, state: {})
+        self.assertEqual(set(compiled.builder.nodes), {*LIVE_STEPS, "pricing_review"})
+        joins = set(compiled.builder.waiting_edges)
+        for name, spec in LIVE_STEPS.items():
+            if name != "financial_projections" and spec.required:
+                dependencies = set(spec.required + spec.optional)
+                self.assertTrue(any(set(upstream) == dependencies and target == name for upstream, target in joins))
+        self.assertIn("financial_projections", compiled.builder.branches["pricing_strategy"]["route_after_pricing"].ends)
+        broken = dict(LIVE_STEPS)
+        broken["problem_refined"] = replace(broken["problem_refined"], optional=("undefined_step",))
+        with self.assertRaisesRegex(ValueError, "missing dependenc"):
+            build_graph(lambda step, state: {}, steps=broken)
+        broken["problem_refined"] = replace(broken["problem_refined"], optional=("startup_idea",))
+        with self.assertRaises(ValueError):
+            build_graph(lambda step, state: {}, steps=broken)
+        left, right = {"market": {"status": "succeeded"}}, {"competitor": {"status": "failed"}}
+        self.assertEqual(merge_outcomes(left, right), merge_outcomes(right, left))
+        with self.assertRaisesRegex(ValueError, "Conflicting"):
+            merge_outcomes(left, {"market": {"status": "failed"}})
+
+    def test_langgraph_interrupt_resume_from_postgres_in_separate_process(self):
+        initial = self.graph_run("graph-interrupt")
+        run_id = initial["run_id"]
+        claim = self.database.claim()
+        execute_claim(self.database, claim, review_pricing=True)
+        with self.database.connect(autocommit=True, prepare_threshold=0) as connection:
+            paused = connection.execute("""SELECT graph_interrupt_id, claim_token, lease_until
+                                          FROM v1_runs WHERE run_id=%s""", (run_id,)).fetchone()
+            checkpoint = PostgresSaver(connection).get_tuple({"configurable": {"thread_id": run_id}})
+        self.assertIsNotNone(checkpoint)
+        self.assertTrue(paused["graph_interrupt_id"])
+        self.assertIsNone(paused["claim_token"])
+        self.assertIsNone(paused["lease_until"])
+        self.assertIsNone(self.database.claim())
+        steps = {s["step_id"]: s["status"] for s in self.database.snapshot("alice", run_id)["steps"]}
+        self.assertEqual(steps["pricing_strategy"], "succeeded")
+        self.assertEqual(steps["financial_projections"], "queued")
+        with self.assertRaises(StoreError) as foreign:
+            self.database.authorize_graph_resume("bob", run_id, paused["graph_interrupt_id"])
+        self.assertEqual(foreign.exception.status, 404)
+        with self.assertRaises(StoreError) as wrong:
+            self.database.authorize_graph_resume("alice", run_id, "wrong-interrupt")
+        self.assertEqual(wrong.exception.status, 409)
+        for _ in range(2):
+            self.database.authorize_graph_resume("alice", run_id, paused["graph_interrupt_id"])
+        environment = {**os.environ, "DATABASE_URL": self.dsn, "V1_PROVIDER_MODE": "fake", "ENVIRONMENT": "development"}
+        completed = subprocess.run([sys.executable, "-m", "backend.run_worker.worker", "--once"],
+                                   env=environment, capture_output=True, timeout=45)
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8", errors="replace"))
+        final = self.database.snapshot("alice", run_id)
+        self.assertEqual(final["status"], "succeeded")
+        self.assertEqual(len(final["artifacts"]), 16)
+        self.assertEqual(next(s["attempt"] for s in final["steps"] if s["step_id"] == "pricing_strategy"), 1)
+        events = self.database.events("alice", run_id, 0)
+        self.assertEqual(replay(initial, events), final)
+        with self.database.connect(autocommit=True, prepare_threshold=0) as connection:
+            latest = PostgresSaver(connection).get_tuple({"configurable": {"thread_id": run_id}})
+        state = latest.checkpoint["channel_values"]
+        self.assertEqual(state["review"], {"step_id": "pricing_strategy", "artifact_id": "pricing_strategy",
+                                          "decision": "approve"})
+        self.assertEqual(len(state["outcomes"]), 16)
+        self.assertEqual(state["outcomes"]["market_research"]["research_artifact_id"], "market_research")
+        self.assertNotIn("content", state["outcomes"]["market_research"]["artifact"])
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_graph_reconciles_artifact_commit_and_terminal_publication(self):
+        initial = self.graph_run("checkpoint-crash")
+        run_id = initial["run_id"]
+        claim = self.database.claim()
+        with patch.object(self.database, "graph_step_outcome", side_effect=RuntimeError("synthetic crash")):
+            with self.assertRaisesRegex(RuntimeError, "Graph node interrupted"):
+                execute_claim(self.database, claim)
+        self.assertEqual(self.database.artifact("alice", run_id, "problem_refined")["reference"]["quality"], "complete")
+        self.expire(run_id)
+        restarted = Store(self.dsn)
+        provider = Mock(side_effect=demo_provider)
+        with patch.object(restarted, "finish", side_effect=RuntimeError("synthetic crash before final publication")):
+            with self.assertRaisesRegex(RuntimeError, "before final publication"):
+                execute_claim(restarted, restarted.claim(), provider)
+        self.assertNotIn("problem_refined", [call.args[0] for call in provider.call_args_list])
+        self.assertEqual(len(provider.call_args_list), 15)
+        self.assertEqual(restarted.snapshot("alice", run_id)["status"], "running")
+        self.expire(run_id)
+        execute_claim(restarted, restarted.claim(), Mock(side_effect=AssertionError("Provider should not run again")))
+        final = restarted.snapshot("alice", run_id)
+        self.assertEqual(final["status"], "succeeded")
+        self.assertEqual(replay(initial, restarted.events("alice", run_id, 0)), final)
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_graph_recovers_settled_attempt_before_artifact_commit(self):
+        initial = self.graph_run("provider-before-artifact", mode="live")
+        run_id = initial["run_id"]
+        database = self.database
+        claim = database.claim()
+
+        def provider(step, body, upstream):
+            if step == "problem_refined":
+                return fixture_provider(step, body, upstream, store=database, claim=claim)
+            return demo_provider(step, body, upstream)
+
+        with patch.object(database, "complete_step", side_effect=RuntimeError("synthetic publication crash")):
+            with self.assertRaisesRegex(RuntimeError, "Graph node interrupted"):
+                execute_claim(database, claim, provider)
+        with self.assertRaises(StoreError):
+            database.artifact("alice", run_id, "problem_refined")
+        self.expire(run_id)
+        database = Store(self.dsn)
+        claim = database.claim()
+        execute_claim(database, claim, provider)
+        with database.connect() as connection:
+            charges = connection.execute("""SELECT status, charged_tokens FROM v1_llm_attempts
+                WHERE run_id=%s AND step_id='problem_refined' ORDER BY attempt_no""", (run_id,)).fetchall()
+        self.assertEqual(charges, [{"status": "succeeded", "charged_tokens": 400}] * 2)
+        events = database.events("alice", run_id, 0)
+        self.assertEqual(sum(e["type"] == "artifact.created" and e["data"]["step_id"] == "problem_refined"
+                             for e in events), 1)
+        self.assertEqual(replay(initial, events), database.snapshot("alice", run_id))
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_graph_reclaim_fences_parallel_nodes_and_checkpoint_writes(self):
+        initial = self.graph_run("checkpoint-lease")
+        run_id = initial["run_id"]
+        claim = self.database.claim()
+        reached = Barrier(3)
+        release = Event()
+
+        def abandoned(step, body, upstream):
+            if step in {"market_research", "competitor_analysis"}:
+                reached.wait(15)
+                if not release.wait(15):
+                    raise RuntimeError("Test release did not arrive")
+            return demo_provider(step, body, upstream)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            active = pool.submit(execute_claim, self.database, claim, abandoned)
+            try:
+                reached.wait(15)
+                self.expire(run_id)
+                restarted = Store(self.dsn)
+                replacement = restarted.claim()
+                self.assertEqual(replacement[0], run_id)
+                with restarted.connect(autocommit=True, prepare_threshold=0) as conn:
+                    valid = ClaimCheckpointer(conn, *replacement)
+                    config = {"configurable": {"thread_id": run_id}}
+                    latest = valid.get_tuple(config)
+                    with self.assertRaises(ValueError):
+                        valid.get_tuple({"configurable": {"thread_id": str(uuid4())}})
+                    stale = ClaimCheckpointer(conn, *claim)
+                    with self.assertRaises(LostClaim):
+                        stale.put(latest.config, latest.checkpoint, latest.metadata, {})
+                    with self.assertRaises(LostClaim):
+                        stale.put_writes(latest.config, [("outcomes", {})], "stale-task")
+            finally:
+                release.set()
+            with self.assertRaises(LostClaim):
+                active.result(timeout=15)
+        provider = Mock(side_effect=demo_provider)
+        execute_claim(restarted, replacement, provider)
+        recomputed = [call.args[0] for call in provider.call_args_list]
+        self.assertNotIn("problem_refined", recomputed)
+        self.assertNotIn("startup_idea", recomputed)
+        self.assertIn("market_research", recomputed)
+        self.assertIn("competitor_analysis", recomputed)
+        final = restarted.snapshot("alice", run_id)
+        self.assertEqual(final["status"], "succeeded")
+        self.assertEqual(replay(initial, restarted.events("alice", run_id, 0)), final)
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_graph_distinguishes_invalid_required_output_and_optional_timeout(self):
+        for failing_step, code in (("financial_projections", "invalid_output"), ("risk_register", "provider_timeout")):
+            with self.subTest(step=failing_step):
+                initial = self.graph_run(failing_step)
+                run_id = initial["run_id"]
+
+                def provider(step, body, upstream):
+                    if step == failing_step:
+                        if code == "invalid_output":
+                            return {}
+                        raise ProviderTimeout()
+                    if step == "executive_summary" and failing_step == "risk_register":
+                        self.assertNotIn("risk_register", upstream)
+                    return demo_provider(step, body, upstream)
+
+                execute_claim(self.database, self.database.claim(), provider)
+                final = self.database.snapshot("alice", run_id)
+                self.assertEqual(final["status"], "partial")
+                steps = {s["step_id"]: s for s in final["steps"]}
+                self.assertEqual(steps[failing_step]["error"]["code"], code)
+                self.assertEqual(steps["product_design"]["status"], "succeeded")
+                if failing_step == "financial_projections":
+                    self.assertEqual(steps["pitch_deck"]["error"]["code"], "dependency_blocked")
+                else:
+                    self.assertEqual(steps["executive_summary"]["status"], "succeeded")
+                report = self.client.get(f"/runs/{run_id}/exports/markdown", headers=self.headers())
+                self.assertIn("Missing sections:", report.text)
+                self.assertIn("Fake-provider demonstration", report.text)
+
+    def test_graph_capacity_is_shared_across_workers_and_modes_are_pinned(self):
+        self.graph_run("first-fake")
+        self.graph_run("second-fake")
+        live = self.graph_run("live", mode="live")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            claims = list(pool.map(lambda _: Store(self.dsn).claim(graph_mode="fake", active_limit=1), range(4)))
+        active = [claim for claim in claims if claim]
+        self.assertEqual(len(active), 1)
+        self.assertIsNone(self.database.claim(graph_mode="live", active_limit=1))
+        self.expire(active[0][0])
+        self.assertEqual(self.database.claim(graph_mode="live", active_limit=1)[0], live["run_id"])
+
+    def test_postgres_checkpointer_migration_is_concurrent_private_and_repeatable(self):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda _: Store(self.dsn).migrate(), range(2)))
+        with self.database.connect() as connection:
+            secured = connection.execute("""SELECT relname FROM pg_class
+                WHERE relnamespace=current_schema()::regnamespace AND relrowsecurity
+                  AND relname IN ('checkpoints', 'checkpoint_writes', 'checkpoint_blobs', 'checkpoint_migrations')""").fetchall()
+            self.assertEqual(len(secured), 4)
+            self.assertEqual(connection.execute("SELECT count(*) AS count FROM checkpoint_migrations").fetchone()["count"],
+                             len(PostgresSaver.MIGRATIONS))
+
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_graph_uses_adapter_fallback_and_stops_after_retry_exhaustion(self):
+        for exhaust in (False, True):
+            with self.subTest(exhaust=exhaust):
+                initial = self.graph_run(f"provider-{exhaust}", mode="live")
+                claim = self.database.claim()
+                attempted = []
+
+                class FlakyGroq(FixtureGroq):
+                    async def complete(self, model, messages, **kwargs):
+                        attempted.append(model)
+                        if exhaust or len(attempted) == 1:
+                            request = httpx.Request("POST", "https://example.test/provider")
+                            response = httpx.Response(503 if exhaust else 429, request=request,
+                                                      headers={"Retry-After": "0"})
+                            raise APIStatusError("simulated provider failure", response=response, body={})
+                        reply = await super().complete("openai/gpt-oss-120b", messages, **kwargs)
+                        reply.model = model
+                        return reply
+
+                def provider(step, body, upstream):
+                    if step == "problem_refined":
+                        return fixture_provider(step, body, upstream, groq=FlakyGroq, store=self.database, claim=claim)
+                    return demo_provider(step, body, upstream)
+
+                with patch("backend.llm.client.uniform", return_value=0):
+                    execute_claim(self.database, claim, provider)
+                final = self.database.snapshot("alice", initial["run_id"])
+                with self.database.connect() as connection:
+                    ledger = connection.execute("""SELECT status, requested_model, actual_model FROM v1_llm_attempts
+                        WHERE run_id=%s ORDER BY attempt_no""", (initial["run_id"],)).fetchall()
+                if exhaust:
+                    self.assertEqual(final["status"], "failed")
+                    self.assertEqual(final["error"]["code"], "provider_failed")
+                    self.assertEqual([entry["status"] for entry in ledger], ["transient"] * 3)
+                    self.assertEqual(len(attempted), 3)
+                else:
+                    self.assertEqual(final["status"], "succeeded")
+                    self.assertEqual([entry["status"] for entry in ledger], ["rate_limited", "succeeded"])
+                    self.assertEqual(ledger[1]["actual_model"], "openai/gpt-oss-20b")
+                    self.assertEqual(attempted, ["openai/gpt-oss-120b", "openai/gpt-oss-20b"])
 
     def test_duplicate_submission_concurrent_and_conflicting(self):
         with ThreadPoolExecutor(max_workers=6) as pool:
@@ -292,6 +548,9 @@ class WorkerIntegrationTests(unittest.TestCase):
         with TestClient(main_app) as client, patch.object(settings, "database_url", self.dsn):
             self.assertEqual(client.get("/health").json(), {"status": "healthy"})
             self.assertEqual(client.get("/ready").status_code, 503)
+            with self.database.connect() as connection:
+                connection.execute("INSERT INTO v1_worker_heartbeats VALUES ('fake', clock_timestamp())")
+            self.assertEqual(client.get("/ready").status_code, 503)
             self.database.heartbeat("fake")
             self.assertEqual(client.get("/ready").json(), {"status": "ready"})
             with self.database.connect() as connection:
@@ -369,7 +628,7 @@ class WorkerIntegrationTests(unittest.TestCase):
             self.assertEqual(replay(initial, events), final)
 
     def test_live_worker_marks_budget_failure_before_dispatch(self):
-        initial = self.database.submit("alice", "tiny", self.body, version=LIVE_VERSION, token_limit=1)
+        initial = self.graph_run("tiny", mode="live", token_limit=1)
         with patch("backend.run_worker.worker.live_provider", fixture_provider):
             execute_claim(self.database, self.database.claim())
         final = self.database.snapshot("alice", initial["run_id"])
@@ -1008,7 +1267,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         initial = response.json()
         run_id = initial["run_id"]
-        self.assertEqual(initial["manifest"]["version"], LIVE_VERSION)
+        self.assertEqual(initial["manifest"]["version"], GRAPH_VERSION)
         self.assertEqual([step["step_id"] for step in initial["manifest"]["steps"]], list(LIVE_STEPS))
         self.assertIsNone(self.database.claim(versions=FAKE_VERSIONS))
         independent_research = Barrier(2)
@@ -1027,7 +1286,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         with patch("backend.run_worker.worker.live_provider", fixture_provider), \
              patch("backend.run_worker.worker.call_with_deadline", observe_call), \
              patch.object(settings, "v1_step_concurrency", 2):
-            execute_claim(self.database, self.database.claim(versions=(LIVE_VERSION,)))
+            execute_claim(self.database, self.database.claim(versions=(GRAPH_VERSION,)))
         final = self.client.get(f"/runs/{run_id}", headers=self.headers()).json()
         self.assertEqual(final["status"], "succeeded")
         self.assertEqual(set(seen), set(LIVE_STEPS))

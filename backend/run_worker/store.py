@@ -14,6 +14,7 @@ from backend.llm.profiles import PROFILE_VERSION, PROMPT_VERSION
 from backend.run_worker import workflow
 
 TERMINAL = {"succeeded", "partial", "failed"}
+STEP_TERMINAL = TERMINAL | {"skipped"}
 
 
 class StoreError(Exception):
@@ -46,19 +47,21 @@ class Store:
     def __init__(self, dsn):
         self.dsn = dsn
 
-    def connect(self):
+    def connect(self, **options):
         if not self.dsn:
             raise StoreError(503, "service_unavailable", "Database is not configured")
-        return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
+        return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5, **options)
 
     def migrate(self):
         with self.connect() as connection:
             # Serialize concurrent invocations of this additive migration.
             connection.execute("SELECT pg_advisory_xact_lock(71894021)")
             connection.execute(Path(__file__).with_name("schema.sql").read_text())
+        from backend.run_worker.checkpoints import migrate_checkpoints
+        migrate_checkpoints(self)
 
     def submit(self, owner, key, body, *, version=None, token_limit=500_000, cost_limit=250_000_000,
-               require_review=False):
+               require_review=False, graph_mode=None):
         with self.connect() as connection:
             timestamp, run_id = now(connection), str(uuid4())
             manifest = workflow.current_manifest(version)
@@ -71,15 +74,17 @@ class Store:
                                    for step in manifest.steps],
                             artifacts=[], evaluations=[], pending_review=None)
             RunSnapshot.model_validate(snapshot)
-            live = manifest.version == workflow.LIVE_VERSION
+            if (manifest.version == workflow.GRAPH_VERSION) != (graph_mode in {"live", "fake"}):
+                raise ValueError("A LangGraph run requires an explicit provider mode")
+            live = manifest.version == workflow.LIVE_VERSION or graph_mode == "live"
             inserted = connection.execute(
                 """INSERT INTO v1_runs (run_id, owner_id, submission_key, input,
                    initial_snapshot, snapshot, created_at, model_profile, prompt_version, token_limit,
-                   cost_limit_nanousd, require_review) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   cost_limit_nanousd, require_review, graph_mode) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (owner_id, submission_key) DO NOTHING RETURNING run_id""",
                 (run_id, owner, key, Jsonb(body), Jsonb(snapshot), Jsonb(snapshot), timestamp,
-                 PROFILE_VERSION if live else None, PROMPT_VERSION if live else None,
-                 token_limit if live else None, cost_limit if live else None, require_review)).fetchone()
+                 PROFILE_VERSION if live else None, PROMPT_VERSION if live or graph_mode else None,
+                 token_limit if live else None, cost_limit if live else None, require_review, graph_mode)).fetchone()
             if inserted:
                 return snapshot
             row = connection.execute(
@@ -93,21 +98,25 @@ class Store:
         with self.connect() as connection:
             connection.execute(
                 """INSERT INTO v1_worker_heartbeats (mode, seen_at) VALUES (%s,clock_timestamp())
-                   ON CONFLICT (mode) DO UPDATE SET seen_at=clock_timestamp()""", (mode,))
+                   ON CONFLICT (mode) DO UPDATE SET seen_at=clock_timestamp()""", (f"{mode}:{workflow.GRAPH_VERSION}",))
 
     def ready(self, mode):
+        from backend.run_worker.checkpoints import checkpoint_schema_ready
+
         with self.connect() as connection:
             connection.execute("SET LOCAL statement_timeout = '3s'")
             # Resolve the runtime relations and migrated columns using the configured database role.
             connection.execute("""
                 SELECT r.token_limit, r.cost_limit_nanousd, r.prompt_version, r.model_profile, r.require_review,
-                       a.body, e.body, l.charged_tokens, l.retry_at, d.receipt
+                       r.graph_mode, r.graph_interrupt_id, r.graph_resume_id, a.body, e.body, l.charged_tokens, l.retry_at, d.receipt
                 FROM v1_runs r LEFT JOIN v1_artifacts a USING (run_id) LEFT JOIN v1_events e USING (run_id)
                 LEFT JOIN v1_llm_attempts l USING (run_id) LEFT JOIN v1_review_decisions d USING (run_id)
                 LIMIT 0""")
+            if not checkpoint_schema_ready(connection):
+                return False
             return connection.execute(
                 """SELECT 1 FROM v1_worker_heartbeats WHERE mode=%s
-                   AND seen_at > clock_timestamp() - interval '45 seconds'""", (mode,)
+                   AND seen_at > clock_timestamp() - interval '45 seconds'""", (f"{mode}:{workflow.GRAPH_VERSION}",)
             ).fetchone() is not None
 
     def snapshot(self, owner, run_id):
@@ -171,21 +180,30 @@ class Store:
         snapshot.update(data)
         self._emit(connection, snapshot, "run.updated", data, timestamp)
 
-    def claim(self, lease_seconds=30, *, versions=None, prompt_versions=None, model_profiles=None):
+    def claim(self, lease_seconds=30, *, versions=None, prompt_versions=None, model_profiles=None,
+              graph_mode=None, active_limit=None):
         if lease_seconds <= 0:
             raise ValueError("Lease must be positive")
         prompts = None if prompt_versions is None else list(prompt_versions)
         profiles = None if model_profiles is None else list(model_profiles)
         with self.connect() as connection:
+            if active_limit is not None:
+                connection.execute("SELECT pg_advisory_xact_lock(71894023)")
+                active = connection.execute("""SELECT count(*) AS active FROM v1_runs
+                    WHERE snapshot->>'status'='running' AND lease_until > clock_timestamp()""").fetchone()
+                if active["active"] >= active_limit:
+                    return None
             row = connection.execute(
                 """SELECT * FROM v1_runs WHERE snapshot->>'status' IN ('queued','running')
                    AND snapshot->'manifest'->>'version' = ANY(%s)
                    AND (%s::text[] IS NULL OR prompt_version = ANY(%s::text[]))
                    AND (%s::text[] IS NULL OR model_profile = ANY(%s::text[]))
+                   AND (%s::text IS NULL OR graph_mode IS NULL OR graph_mode=%s)
+                   AND (graph_interrupt_id IS NULL OR graph_interrupt_id=graph_resume_id)
                    AND (lease_until IS NULL OR lease_until <= clock_timestamp())
                    ORDER BY created_at, run_id FOR UPDATE SKIP LOCKED LIMIT 1""",
                 (list(workflow.WORKFLOWS if versions is None else versions), prompts, prompts,
-                 profiles, profiles)).fetchone()
+                 profiles, profiles, graph_mode, graph_mode)).fetchone()
             if row is None:
                 return None
             token, snapshot = str(uuid4()), row["snapshot"]
@@ -206,7 +224,7 @@ class Store:
             (run_id, step_id, step_id))
 
     @contextmanager
-    def _claimed(self, run_id, token):
+    def _claimed(self, run_id, token, *, release=False):
         with self.connect() as connection:
             row = connection.execute("SELECT snapshot FROM v1_runs WHERE run_id=%s FOR UPDATE",
                                      (run_id,)).fetchone()
@@ -220,9 +238,10 @@ class Store:
             yield connection, snapshot
             RunSnapshot.model_validate(snapshot)
             saved = connection.execute(
-                """UPDATE v1_runs SET snapshot=%s WHERE run_id=%s AND claim_token=%s
+                """UPDATE v1_runs SET snapshot=%s, claim_token=CASE WHEN %s THEN NULL ELSE claim_token END,
+                   lease_until=CASE WHEN %s THEN NULL ELSE lease_until END WHERE run_id=%s AND claim_token=%s
                    AND lease_until > clock_timestamp() RETURNING run_id""",
-                (Jsonb(snapshot), run_id, token)).fetchone()
+                (Jsonb(snapshot), release, release, run_id, token)).fetchone()
             if saved is None:
                 raise LostClaim()  # Rolls back artifact and events too.
 
@@ -247,6 +266,61 @@ class Store:
             return connection.execute(
                 "SELECT model_profile, prompt_version FROM v1_runs WHERE run_id=%s", (run_id,)
             ).fetchone()
+
+    def graph_configuration(self, run_id, token):
+        with self._claimed(run_id, token) as (connection, snapshot):
+            row = connection.execute("""SELECT graph_mode, model_profile, prompt_version, graph_resume_id
+                                       FROM v1_runs WHERE run_id=%s""", (run_id,)).fetchone()
+            return {**row, "input": snapshot["input"], "manifest": snapshot["manifest"]}
+
+    def park_graph(self, run_id, token, interrupt_id):
+        with self._claimed(run_id, token, release=True) as (connection, _):
+            connection.execute("""UPDATE v1_runs SET graph_interrupt_id=%s, graph_resume_id=NULL
+                                  WHERE run_id=%s""", (interrupt_id, run_id))
+
+    def authorize_graph_resume(self, owner, run_id, interrupt_id):
+        """Private approval entry point. Prompt 14 will call this from its review transaction."""
+        with self.connect() as connection:
+            row = connection.execute("""SELECT graph_interrupt_id, graph_resume_id, snapshot->>'status' AS status
+                                       FROM v1_runs WHERE run_id=%s AND owner_id=%s FOR UPDATE""",
+                                     (run_id, owner)).fetchone()
+            if row is None:
+                raise StoreError(404, "not_found", "Run not found")
+            if row["graph_resume_id"] == interrupt_id and interrupt_id:
+                return
+            if not interrupt_id or row["graph_interrupt_id"] != interrupt_id or row["status"] != "running":
+                raise StoreError(409, "state_conflict", "Run has no matching graph interrupt")
+            connection.execute("UPDATE v1_runs SET graph_resume_id=%s WHERE run_id=%s", (interrupt_id, run_id))
+
+    def graph_step_outcome(self, run_id, token, step_id):
+        with self._claimed(run_id, token) as (connection, snapshot):
+            spec = workflow.LIVE_STEPS[step_id]
+            states = {step["step_id"]: step for step in snapshot["steps"]}
+            step = states[step_id]
+            if step["status"] not in STEP_TERMINAL:
+                raise StoreError(409, "state_conflict", "Graph step outcome is not committed")
+            artifact = connection.execute("""SELECT body->'reference' AS reference,
+                       (body->'content') ? 'tool_evidence' AS research,
+                       (body->'content') ? 'assumptions' AS assumptions
+                       FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s""",
+                                          (run_id, step_id)).fetchone()
+            if (step["status"] in {"succeeded", "partial"}) != bool(artifact):
+                raise StoreError(409, "state_conflict", "Graph step artifact is inconsistent")
+            return {
+                "status": step["status"], "error": step["error"], "artifact": artifact["reference"] if artifact else None,
+                "required": {key: states[key]["status"] for key in spec.required},
+                "optional": {key: states[key]["status"] for key in spec.optional},
+                "research_artifact_id": step_id if artifact and artifact["research"] else None,
+                "assumptions_artifact_id": step_id if artifact and artifact["assumptions"] else None,
+            }
+
+    def is_demo(self, owner, run_id, version):
+        if version != workflow.GRAPH_VERSION:
+            return version in workflow.FAKE_VERSIONS
+        with self.connect() as connection:
+            row = connection.execute("SELECT graph_mode FROM v1_runs WHERE run_id=%s AND owner_id=%s",
+                                     (run_id, owner)).fetchone()
+            return row is not None and row["graph_mode"] == "fake"
 
     def begin_step(self, run_id, token, step_id):
         with self._claimed(run_id, token) as (connection, snapshot):
@@ -308,7 +382,10 @@ class Store:
                          retryable=False) if partial else None
             step.update(status="partial" if partial else "succeeded", completed_at=timestamp, error=error)
             self._emit(connection, snapshot, "step.updated", step, timestamp)
-            evaluator = "worker" if snapshot["manifest"]["version"] == workflow.LIVE_VERSION else "fake-provider"
+            graph_mode = connection.execute("SELECT graph_mode FROM v1_runs WHERE run_id=%s",
+                                            (run_id,)).fetchone()["graph_mode"]
+            live = snapshot["manifest"]["version"] == workflow.LIVE_VERSION or graph_mode == "live"
+            evaluator = "worker" if live else "fake-provider"
             reason = "No quality evaluator is configured." if evaluator == "worker" else "Fake workflow has no quality evaluator."
             evaluation = dict(evaluation_id=f"{step_id}-evaluation", step_id=step_id, artifact_id=step_id,
                               evaluator=evaluator, evaluator_version="1", outcome="not_evaluated",

@@ -24,10 +24,14 @@ class ClaimCalls:
         return self
 
     def __exit__(self, exc_type, exc, traceback):
+        self.cancel()
+
+    def cancel(self):
         with self._lock:
             self._closed = True
             for process in self._active:
-                process.kill()
+                if process.is_alive():
+                    process.kill()
 
     @contextmanager
     def running(self, process):

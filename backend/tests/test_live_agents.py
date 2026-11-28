@@ -4,9 +4,12 @@ from dataclasses import replace
 from importlib import import_module
 import json
 from pathlib import Path
+from threading import Event
+from time import sleep
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
+from os import getpid
 
 from backend import agents
 from backend.config import Settings
@@ -14,10 +17,10 @@ from backend.context import RunContext
 from backend.llm.profiles import STARTUP_PROMPTS_V1
 from backend.run_worker import live_agents
 from backend.run_worker.provider_call import ClaimCalls, call_with_deadline
-from backend.run_worker.workflow import LIVE_STEPS, LIVE_VERSION, InvalidOutput, check_graph, validate_output
+from backend.run_worker.workflow import LIVE_STEPS, LIVE_VERSION, InvalidOutput, check_graph, fake_provider, validate_output
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "live_agent_outputs.json"
+FIXTURE = Path(__file__).parents[1] / "run_worker" / "demo_outputs.json"
 
 
 class FixtureGroq:
@@ -46,12 +49,12 @@ class FixtureGroq:
         raise AssertionError("No existing agent prompt matched")
 
 
-def fixture_provider(step_id, body, upstream, *, prompt_version=STARTUP_PROMPTS_V1, **options):
+def fixture_provider(step_id, body, upstream, *, prompt_version=STARTUP_PROMPTS_V1, groq=FixtureGroq, **options):
     # This function is importable by spawned worker children on Windows.
     search = "Verified internship research\nSource: https://example.org/audit-source"
     fred = "Federal Funds Rate: 4.25 (synthetic fixture)"
     with (
-        patch("backend.llm.client.AsyncGroq", FixtureGroq),
+        patch("backend.llm.client.AsyncGroq", groq),
         patch("backend.agents.layer1.agent1_idea.search_web", new=AsyncMock(return_value=search)),
         patch("backend.agents.layer1.agent2_market.search_web", new=AsyncMock(return_value=search)),
         patch("backend.agents.layer1.agent2_market.fetch_fred_data", new=AsyncMock(return_value=fred)),
@@ -63,6 +66,20 @@ def fixture_provider(step_id, body, upstream, *, prompt_version=STARTUP_PROMPTS_
 
 def invalid_provider(step_id, body, upstream):
     raise InvalidOutput(step_id)
+
+
+def hang_during_pricing(step_id, body, upstream):
+    if step_id == "pricing_strategy":
+        Event().wait()
+    return fake_provider(step_id, body, upstream)
+
+
+def wait_in_sibling_steps(marker_dir, step_id, body, upstream):
+    if step_id in {"pricing_strategy", "risk_register"}:
+        (Path(marker_dir) / f"{getpid()}.started").touch()
+        while not (Path(marker_dir) / "release").exists():
+            sleep(0.05)
+    return fake_provider(step_id, body, upstream)
 
 
 class LiveAgentTests(unittest.TestCase):
