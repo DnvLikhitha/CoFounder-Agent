@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     # App
     environment: str = Field(default="development", env="ENVIRONMENT")
-    max_concurrent_runs: int = Field(default=5, env="MAX_CONCURRENT_RUNS")
+    max_concurrent_runs: int = Field(default=5, ge=1, env="MAX_CONCURRENT_RUNS")
     database_url: str = ""
     v1_provider_mode: Literal["", "fake", "live"] = ""
     v1_step_concurrency: int = Field(default=2, ge=1, le=8)

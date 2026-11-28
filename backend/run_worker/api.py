@@ -23,7 +23,7 @@ from backend.run_worker.auth import Owner, owner
 from backend.safe_logging import SafeRequests
 from backend.run_worker.prompts_v1 import apply_artifact
 from backend.run_worker.store import Store, StoreError, TERMINAL
-from backend.run_worker.workflow import FAKE_VERSIONS, LIVE_VERSION
+from backend.run_worker.workflow import FAKE_VERSIONS, GRAPH_VERSION
 
 app = FastAPI(title="CoFounder-Agent Run Contract", version="1.0.0")
 app.add_middleware(SafeRequests, private=True)
@@ -63,9 +63,8 @@ def submit(body: RunInput, user: OwnerDependency, database: StoreDependency,
         mode = settings.require_v1_provider_mode()
     except ValueError as exc:
         raise StoreError(503, "service_unavailable", str(exc)) from None
-    version = LIVE_VERSION if mode == "live" else FAKE_VERSIONS[-1]
     return database.submit(
-        user.subject, idempotency_key, body.model_dump(mode="json"), version=version,
+        user.subject, idempotency_key, body.model_dump(mode="json"), version=GRAPH_VERSION, graph_mode=mode,
         token_limit=settings.v1_run_token_limit, cost_limit=settings.v1_run_cost_limit_nanousd,
         require_review=mode == "live" and settings.v1_require_founder_review,
     )
@@ -157,14 +156,15 @@ async def export(run_id: UUID, format: Literal["pdf", "markdown", "pptx"],
     missing = [labels[step["step_id"]] for step in state["steps"] if step["status"] in {"skipped", "failed"}]
     degraded = [labels[step["step_id"]] for step in state["steps"] if step["status"] == "partial"]
     status = "Partial results" if state["status"] == "partial" else "Succeeded"
-    is_demo = state["manifest"]["version"] in FAKE_VERSIONS
+    version = state["manifest"]["version"]
+    is_demo = await run_in_threadpool(database.is_demo, user.subject, run_id, version)
     notice = f"Fake-provider demonstration. {status}." if is_demo else f"{status}."
     if missing:
         notice += " Missing sections: " + ", ".join(missing) + "."
     if degraded:
         notice += " Incomplete sections: " + ", ".join(degraded) + "."
 
-    if is_demo:
+    if version in FAKE_VERSIONS:
         highlights = []
         if model := context.business_model.get("model"):
             highlights.append(f"Business model: {model}.")

@@ -30,6 +30,9 @@ ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS prompt_version text;
 ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS token_limit bigint CHECK (token_limit > 0);
 ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS cost_limit_nanousd bigint CHECK (cost_limit_nanousd > 0);
 ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS require_review boolean NOT NULL DEFAULT false;
+ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS graph_mode text CHECK (graph_mode IN ('live', 'fake'));
+ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS graph_interrupt_id text;
+ALTER TABLE v1_runs ADD COLUMN IF NOT EXISTS graph_resume_id text;
 ALTER TABLE v1_runs ALTER COLUMN submission_key DROP NOT NULL;
 
 -- Pre-ledger live runs start with a fixed budget for work after the migration.

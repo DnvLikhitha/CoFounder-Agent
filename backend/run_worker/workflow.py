@@ -79,6 +79,7 @@ class StepSpec:
 
 
 LIVE_VERSION = "live-startup-v1"
+GRAPH_VERSION = "startup-langgraph-v1"
 FAKE_VERSIONS = ("fake-business-v1", "fake-business-v2")
 LIVE_STEPS = MappingProxyType({
     "problem_refined": StepSpec((), (), live_outputs.RefinedProblem,
@@ -137,6 +138,7 @@ check_graph({name: spec.required + spec.optional for name, spec in LIVE_STEPS.it
 # Released entries and their output models are retained for in-flight runs.
 WORKFLOWS = MappingProxyType({
     LIVE_VERSION: LIVE_STEPS,
+    GRAPH_VERSION: LIVE_STEPS,
     "fake-business-v1": MappingProxyType({
         # The original worker validated Artifact.content as JSON only.
         "business_model": StepSpec((), (), None),

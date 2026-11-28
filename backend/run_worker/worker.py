@@ -12,27 +12,50 @@ from backend.llm.profiles import PROFILES
 from backend.run_worker.ledger import BudgetExceeded
 from backend.run_worker.live_agents import PROMPT_BUNDLES, live_provider, verify_prompt_bundles
 from backend.run_worker.provider_call import ClaimCalls, ProviderTimeout, call_with_deadline
-from backend.run_worker.store import LostClaim, Store
+from backend.run_worker.store import LostClaim, Store, StoreError
 from backend.run_worker.workflow import (
-    FAKE_VERSIONS, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure, check_graph, fake_provider,
+    FAKE_VERSIONS, GRAPH_VERSION, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput, ProviderFailure,
+    check_graph, fake_provider,
 )
 from backend.safe_logging import configure_safe_logging
 
 
-def execute_claim(store, claim, provider=None, lease_seconds=30, heartbeat_mode=None):
+def pinned_live_provider(store, claim, configuration):
+    profile = configuration["model_profile"]
+    prompt_version = configuration["prompt_version"]
+    if profile not in PROFILES or prompt_version not in PROMPT_BUNDLES:
+        raise ValueError("Unsupported pinned live execution profile")
+    return partial(live_provider, store=store, claim=claim, profile=profile, prompt_version=prompt_version,
+                   timeout=settings.v1_provider_timeout_seconds)
+
+
+def execute_claim(store, claim, provider=None, lease_seconds=30, heartbeat_mode=None, *, review_pricing=False):
     run_id, token = claim
     # The manifest is frozen in PostgreSQL when submitted.
     version, definitions, states = store.workflow(run_id, token)
+    if version == GRAPH_VERSION:
+        from backend.run_worker.graph import demo_provider, execute_graph
+
+        configuration = store.graph_configuration(*claim)
+        with ClaimCalls() as calls:
+            if provider is None and configuration["graph_mode"] == "fake":
+                execute = demo_provider
+            else:
+                provider = provider or pinned_live_provider(store, claim, configuration)
+
+                def execute(step_id, body, upstream):
+                    return call_with_deadline(provider, step_id, body, upstream,
+                                              settings.v1_provider_timeout_seconds, calls)
+
+            execute_graph(store, claim, configuration, execute, calls, lease_seconds=lease_seconds,
+                          heartbeat_mode=heartbeat_mode, review=review_pricing)
+        return
+
+    # Drain jobs pinned before the graph migration with their original scheduler.
     if provider is None:
         provider = fake_provider
         if version == LIVE_VERSION:
-            configuration = store.live_configuration(run_id, token)
-            profile = configuration["model_profile"]
-            prompt_version = configuration["prompt_version"]
-            if profile not in PROFILES or prompt_version not in PROMPT_BUNDLES:
-                raise ValueError("Unsupported pinned live execution profile")
-            provider = partial(live_provider, store=store, claim=claim, profile=profile, prompt_version=prompt_version,
-                               timeout=settings.v1_provider_timeout_seconds)
+            provider = pinned_live_provider(store, claim, store.live_configuration(run_id, token))
     dependencies = {step["step_id"]: set(step["depends_on"]) for step in definitions}
     if version == LIVE_VERSION:
         # Wait for optional producers to settle, then pass only their committed complete artifacts.
@@ -105,19 +128,20 @@ def main():
     except ValueError as exc:
         parser.error(str(exc))
     if mode == "live":
-        claim_options = dict(versions=(LIVE_VERSION,), prompt_versions=PROMPT_BUNDLES, model_profiles=PROFILES)
+        claim_options = dict(versions=(LIVE_VERSION, GRAPH_VERSION), prompt_versions=PROMPT_BUNDLES,
+                             model_profiles=PROFILES)
     else:
-        claim_options = dict(versions=FAKE_VERSIONS)
+        claim_options = dict(versions=(*FAKE_VERSIONS, GRAPH_VERSION))
     store = Store(settings.database_url)
     while True:
         try:
             store.heartbeat(mode)
-            claim = store.claim(**claim_options)
+            claim = store.claim(**claim_options, graph_mode=mode, active_limit=settings.max_concurrent_runs)
             if claim:
                 execute_claim(store, claim, heartbeat_mode=mode)
         except LostClaim:
             logging.warning("Worker lease lost; discarded stale work")
-        except (psycopg.Error, RuntimeError, ValueError):
+        except (psycopg.Error, StoreError, RuntimeError, ValueError):
             # No provider errors, DSNs, or credentials are printed.
             logging.error("Worker attempt interrupted; lease permits later recovery")
             if args.once:
