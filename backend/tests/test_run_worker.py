@@ -1374,14 +1374,20 @@ class WorkerIntegrationTests(unittest.TestCase):
                 self.assertIn("Business model: subscription", slide_text)
 
     def test_exports_and_legacy_routes_disabled(self):
+        from reportlab import rl_config
+
         run_id = self.submit()["run_id"]
         self.assertEqual(self.client.get(f"/runs/{run_id}/exports/pdf", headers=self.headers()).status_code, 409)
         execute_claim(self.database, self.database.claim())
         for format, prefix in [("markdown", b"#"), ("pdf", b"%PDF"), ("pptx", b"PK")]:
-            response = self.client.get(f"/runs/{run_id}/exports/{format}", headers=self.headers())
+            with patch.object(rl_config, "pageCompression", 0):
+                response = self.client.get(f"/runs/{run_id}/exports/{format}", headers=self.headers())
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.content.startswith(prefix))
             self.assertIn("attachment", response.headers["content-disposition"])
+            if format == "pdf":
+                self.assertIn(b"Slide 1: Workflow results", response.content)
+                self.assertIn(b"Business model: subscription.", response.content)
         from backend.main import app as main_app
         client = TestClient(main_app)
         legacy = [("POST", "/api/run"), ("GET", "/api/runs"), ("GET", f"/api/run/{run_id}"),
@@ -1475,7 +1481,10 @@ class WorkerIntegrationTests(unittest.TestCase):
             seen[step_id] = frozenset(upstream)
             if step_id in {"market_research", "competitor_analysis"}:
                 independent_research.wait(5)
-            return call_with_deadline(provider, step_id, body, upstream, timeout, calls)
+            output = call_with_deadline(provider, step_id, body, upstream, timeout, calls)
+            if step_id == "pitch_deck":
+                output["slides"].reverse()
+            return output
 
         with patch("backend.run_worker.worker.live_provider", fixture_provider), \
              patch("backend.run_worker.worker.call_with_deadline", observe_call), \
@@ -1515,12 +1524,20 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertIn("CREATE TABLE verified_roles", markdown.text)
         self.assertIn("A Verified Internship Gap", markdown.text)
         self.assertIn("https://example.org/audit-source", markdown.text)
+        self.assertIn("**Estimated Infra Cost:** Unavailable", markdown.text)
         self.assertNotIn("Fake-provider demonstration", markdown.text)
         with patch.object(rl_config, "pageCompression", 0):
             pdf = self.client.get(f"{exports}/pdf", headers=self.headers())
         self.assertEqual(pdf.status_code, 200)
         self.assertIn(b"Campus Bridge connects busy students", pdf.content)
         self.assertIn(b"Campus Pilot", pdf.content)
+        for expected in (b"Customer Personas", b"Product Design", b"MVP Roadmap", b"Business Model",
+                         b"Technical Architecture", b"CREATE TABLE verified_roles", b"Security and Compliance",
+                         b"A Verified Internship Gap", b"Verify hours before applying.",
+                         b"Speaker notes: Describe the schedule verification workflow."):
+            self.assertIn(expected, pdf.content)
+        positions = [pdf.content.index(f"Slide {number}:".encode()) for number in range(1, 13)]
+        self.assertEqual(positions, sorted(positions))
         pptx = self.client.get(f"{exports}/pptx", headers=self.headers())
         self.assertEqual(pptx.status_code, 200)
         deck = Presentation(BytesIO(pptx.content))

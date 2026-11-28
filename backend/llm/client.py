@@ -2,6 +2,7 @@
 import asyncio
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import logging
 import math
 from random import uniform
 import re
@@ -18,6 +19,9 @@ from backend.safe_logging import configure_safe_logging
 
 ATTEMPT_TIMEOUT = 20
 MAX_BACKOFF = 8
+LOGGER = logging.getLogger(__name__)
+PUBLIC_ERROR_CODES = {"invalid_api_key", "insufficient_quota", "model_not_found", "model_decommissioned",
+                      "model_permission_denied", "permission_denied", "invalid_request_error", "rate_limit_exceeded"}
 
 
 def retry_after(headers):
@@ -34,15 +38,19 @@ def retry_after(headers):
     return max(0.0, delay) if math.isfinite(delay) else 0.0
 
 
+def error_code(exc):
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error", body)
+    return error.get("code") if isinstance(error, dict) else None
+
+
 def classify_error(exc):
     if isinstance(exc, (TimeoutError, APITimeoutError)):
         return "unknown"
     if isinstance(exc, APIConnectionError):
         return "transient"
     status = exc.status_code
-    body = exc.body if isinstance(exc.body, dict) else {}
-    error = body.get("error", body)
-    code = error.get("code") if isinstance(error, dict) else None
+    code = error_code(exc)
     if status == 429:
         return "rate_limited"
     if status in {400, 404} and code in ("model_not_found", "model_decommissioned"):
@@ -56,7 +64,8 @@ class LLMClient:
     def __init__(self, *, profile=PROFILE_VERSION, system_prompt=SYSTEM_PROMPT, ledger=None, deadline=None):
         configure_safe_logging()
         self.groq = AsyncGroq(
-            api_key=settings.groq_api_key, base_url="https://api.groq.com/openai/v1",
+            # The pinned SDK adds /openai/v1 to chat resource paths.
+            api_key=settings.groq_api_key, base_url="https://api.groq.com",
             max_retries=0, timeout=ATTEMPT_TIMEOUT,
         )
         self.models = PROFILES[profile]
@@ -122,6 +131,11 @@ class LLMClient:
                                        usage=(0, 0) if definite else None,
                                        cost=0 if definite else None, retry_delay=delay)
                 if not retry or index == MAX_ATTEMPTS - 1:
+                    if isinstance(exc, APIStatusError):
+                        code = error_code(exc)
+                        safe_code = code if isinstance(code, str) and code in PUBLIC_ERROR_CODES else "unclassified"
+                        LOGGER.warning("Groq request stopped (HTTP %d, category %s, code %s)",
+                                       exc.status_code, status, safe_code)
                     if status == "unknown":
                         raise ProviderTimeout() from None
                     raise ProviderFailure() from None
