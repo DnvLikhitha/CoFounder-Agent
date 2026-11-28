@@ -7,14 +7,16 @@
     "dev": "vite --mode live",
     "dev:mock": "vite --mode mock",
     "build": "vite build --mode live",
-    "build:mock": "vite build --mode mock --outDir dist-mock",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
+    "test:browser": "node --test browser/integration.test.js",
+    "verify:live": "node browser/verify-live.js",
     "dev:live": "vite --mode live",
     "build:live": "vite build --mode live"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "eventsource-parser": "^4.1.3",
@@ -31,6 +33,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.8",
     "globals": "^17.14.0",
+    "playwright": "^1.65.1",
     "vite": "^8.4.0"
   }
 }
