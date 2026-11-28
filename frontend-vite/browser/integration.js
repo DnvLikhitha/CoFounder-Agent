@@ -311,6 +311,21 @@ test('sign-in, protected routes, run submission, authenticated SSE renewal, relo
   await page.waitForURL('**/sign-in')
   await page.getByRole('heading', { name: 'Sign in to CoFounder Agent' }).waitFor()
   assert.equal(state.calls.length, 0)
+  const defaultPrevented = await page.getByRole('link', { name: 'Skip to content' }).evaluate((link) => {
+    const main = link.ownerDocument.getElementById('main')
+    main.removeAttribute('id')
+    try {
+      const click = new link.ownerDocument.defaultView.MouseEvent('click', { bubbles: true, cancelable: true })
+      return !link.dispatchEvent(click)
+    } finally {
+      main.id = 'main'
+    }
+  })
+  assert.ok(defaultPrevented)
+  await page.keyboard.press('Tab')
+  assert.equal(await page.locator(':focus').getAttribute('class'), 'skip-link')
+  await page.keyboard.press('Enter')
+  assert.equal(await page.locator(':focus').getAttribute('id'), 'main')
   await signIn(page, owner, 'incorrect')
   await page.getByRole('alert').getByText('Check your email and password and try again.').waitFor()
   await signIn(page)
