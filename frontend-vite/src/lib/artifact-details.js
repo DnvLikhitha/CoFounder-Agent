@@ -10,18 +10,42 @@ export function readEvidence(content) {
     const key = source.url ?? source.label
     if (!unique.has(key)) unique.set(key, source)
   }
-  const assumptions = content?.assumptions
-  const entries = Array.isArray(assumptions)
-    ? assumptions.filter((item) => typeof item === 'string' && item.trim())
-      .map((value) => ({ label: null, value }))
-    : assumptions && typeof assumptions === 'object'
-      ? Object.entries(assumptions).filter(([, value]) => value != null && value !== '')
-        .map(([key, value]) => ({ label: key.replaceAll('_', ' '), value }))
-      : []
-  const note = text(content?.key_assumptions_note)
-  if (text(assumptions)) entries.push({ label: null, value: assumptions })
-  if (note) entries.push({ label: null, value: note })
-  return { sources: [...unique.values()], assumptions: entries }
+  return {
+    sources: [...unique.values()],
+    assumptions: [...entries(content?.assumptions), ...entries(content?.key_assumptions_note)],
+  }
+}
+
+export function readUncertainty(content) {
+  const fields = ['uncertainty', 'uncertainties', 'limitations', 'research_limitations', 'data_limitations', 'confidence']
+  return fields.flatMap((field) => entries(content?.[field], field.replaceAll('_', ' ')))
+}
+
+function entries(value, label = null) {
+  if (Array.isArray(value)) return value.filter(supplied).map((item) => ({ label, value: item }))
+  if (value && typeof value === 'object') {
+    return Object.entries(value).filter(([, item]) => supplied(item))
+      .map(([key, item]) => ({ label: key.replaceAll('_', ' '), value: item }))
+  }
+  return supplied(value) ? [{ label, value }] : []
+}
+
+function supplied(value) {
+  return value != null && (typeof value !== 'string' || Boolean(value.trim()))
+}
+
+export function claimValue(content, pointer) {
+  if (pointer === '') return content
+  if (!pointer.startsWith('/') || /~(?![01])/.test(pointer)) return undefined
+  return pointer.slice(1).split('/').reduce((value, segment) => {
+    const key = segment.replaceAll('~1', '/').replaceAll('~0', '~')
+    if (Array.isArray(value) && !/^(0|[1-9]\d*)$/.test(key)) return undefined
+    return value && typeof value === 'object' && Object.hasOwn(value, key) ? value[key] : undefined
+  }, content)
+}
+
+export function revisionLabel(reference) {
+  return reference.revision ? `Revision ${reference.revision}` : reference.artifact_id
 }
 
 function items(value) {

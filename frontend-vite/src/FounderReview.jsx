@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArtifactContent } from './ArtifactContent.jsx'
 import { Assumptions } from './OutputSection.jsx'
-import { readEvidence } from './lib/artifact-details.js'
+import { readEvidence, revisionLabel } from './lib/artifact-details.js'
 import { useArtifact } from './lib/use-artifact.js'
 
 const decisionLabels = {
@@ -21,7 +21,7 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
   const pricingReview = review.revision_kind === 'pricing' && client.supportsPricingRevision
   const pricingRef = pricingReview ? artifacts.find((item) => item.artifact_id === review.artifact_ids[0]) : null
   const pricing = useArtifact(client, runId, pricingRef)
-  const tiers = pricing.result?.artifact?.content?.tiers ?? []
+  const tiers = Array.isArray(pricing.result?.artifact?.content?.tiers) ? pricing.result.artifact.content.tiers : []
   useEffect(() => () => pending.current?.abort(), [])
 
   function chooseTier(name) {
@@ -35,15 +35,24 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
 
   async function submit(decision) {
     if (pending.current) return
+    const revisingPrices = decision === 'revise' && pricingReview
+    const edit = revisingPrices ? {
+      tier_name: pricingDraft.tier_name,
+      price_monthly_usd: Number(pricingDraft.price_monthly_usd),
+      price_annual_usd: Number(pricingDraft.price_annual_usd),
+    } : null
+    if (edit && !submission.current) {
+      const tier = tiers.find(({ tier_name }) => tier_name === edit.tier_name)
+      if (tier && tier.price_monthly_usd === edit.price_monthly_usd && tier.price_annual_usd === edit.price_annual_usd) {
+        setState({ status: 'idle', error: 'Change at least one price before saving a revision.' })
+        return
+      }
+    }
     const payload = submission.current ?? {
       decision_id: crypto.randomUUID(),
       decision,
       comment: decision === 'revise' ? revisionComment.trim() || null : null,
-      ...(decision === 'revise' && pricingReview ? { pricing_revision: {
-        tier_name: pricingDraft.tier_name,
-        price_monthly_usd: Number(pricingDraft.price_monthly_usd),
-        price_annual_usd: Number(pricingDraft.price_annual_usd),
-      } } : {}),
+      ...(edit ? { pricing_revision: edit } : {}),
     }
     submission.current = payload
     const request = new AbortController()
@@ -68,7 +77,11 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
         onStale()
         return
       }
-      const retryable = error.status == null || error.status >= 500 && error.retryable !== false
+      if ([401, 403, 404].includes(error.status)) {
+        setState({ status: 'denied', error: error.message })
+        return
+      }
+      const retryable = error.status == null || error.status === 429 || error.status >= 500 && error.retryable !== false
       if (!retryable) submission.current = null
       setState({ status: retryable ? 'retry' : 'idle', error: error.message, decision })
     } finally {
@@ -77,14 +90,15 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
   }
 
   const revisions = review.artifact_ids.map((id) => ({ id, reference: artifacts.find((item) => item.artifact_id === id) }))
-  const canAct = state.status === 'idle' || state.status === 'revision-requested'
+  const canAct = (state.status === 'idle' || state.status === 'revision-requested') &&
+    revisions.every(({ reference }) => reference) && (!pricingReview || Boolean(pricing.result?.artifact))
   const canRevise = pricingReview ? tiers.length > 0 : (
     client.supportsRevisionPreview && revisions.some(({ reference }) => reference))
   return (
     <section className="panel review" aria-labelledby="review-heading">
       <h2 id="review-heading">Review required</h2>
       <p>{review.prompt}</p>
-      <p className="muted">Checkpoint <code>{review.review_id}</code></p>
+      <p className="muted">{pricingReview ? 'Pricing checkpoint' : 'Founder checkpoint'} <code>{review.review_id}</code></p>
       {revisions.length === 0 && <p className="muted">This checkpoint has no linked artifact revision.</p>}
       {revisions.map(({ id, reference }) => reference ? (
         <ReviewArtifact key={id} reference={reference} client={client} runId={runId} onView={onViewArtifact}
@@ -154,7 +168,7 @@ function ReviewArtifact({ reference, client, runId, onView, pricing }) {
         <h3>{reference.title}</h3>
         <button type="button" onClick={() => onView(reference.artifact_id)}>View artifact</button>
       </div>
-      <p className="muted">Artifact revision <code>{reference.artifact_id}</code></p>
+      <p className="muted">{revisionLabel(reference)}{reference.revision && <> · <code>{reference.artifact_id}</code></>}</p>
       <h4>Assumptions under review</h4>
       {!result && <p role="status">Loading assumptions…</p>}
       {result?.error && <p className="muted">Assumptions could not be loaded. <button onClick={retry}>Retry</button></p>}

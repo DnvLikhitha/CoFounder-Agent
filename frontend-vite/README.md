@@ -56,6 +56,8 @@ See the [React cutover readiness report](RELEASE_READINESS.md) for the tested ca
 - The dashboard uses manifest display order, step states, dependency IDs, and artifact references from v1. Output widgets recognize the artifact kinds used by the legacy agents and show generic structured data for new kinds. Missing values and unproduced artifacts remain visible as such.
 - Starting a run sends an `Idempotency-Key`. Retrying unchanged input in the open form reuses the key. Editing the input, completing the submission, or choosing **Start a new submission** starts a new intent. The key is held in the open form.
 - Live history follows the worker's owner-scoped v1 cursor. Enable `V1_REQUIRE_PRICING_REVIEW` to review draft pricing before investor outputs. The UI sends the selected artifact revision with each decision, supports editing one tier, and waits for the event carrying the replacement review. An HTTP 409 refreshes the snapshot. A separately enabled executive-summary review supports approval or rejection.
+- Run outputs link published source references, claims, and upstream artifact revisions. Revision history lets founders open older outputs and compare two versions side by side. After approval, the run labels downstream work that is regenerating and identifies the resulting revision from its input lineage.
+- Agent evaluations show the reported outcome, method, dimension explanations, and any evidence. Unevaluated outputs are labeled separately and do not display a score. Assumptions and uncertainty notes come from the artifact payload.
 - In live mode, each loaded artifact can be downloaded in its original media type. The UI also downloads server-generated Markdown, PDF, and PowerPoint for succeeded and partial runs.
 - REST and fetch-based SSE use bearer headers. After a stream closes, the client obtains a fresh snapshot and opens the stream at its cursor using the current session. Forbidden, rate-limited, and unavailable responses produce distinct messages and preserve the session.
 
@@ -67,4 +69,3 @@ Provide an existing successful live-provider run owned by a synthetic test accou
 
 - Verify downloads, SSE reconnect, and account isolation through the staging ingress with the migrated worker and production identity provider.
 - Review the pricing edit, second approval, forecast replacement, and contract changes together before release. The shared `revised` fixture exercises both reviews, history, and reconnect at every event cursor.
-- Artifact detail uses the immutable `artifact_id` for historical revisions and labels superseded inputs. Evaluation records show their method, scored dimensions, and linked evidence when available. Roll out the updated frontend with the updated API schemas.

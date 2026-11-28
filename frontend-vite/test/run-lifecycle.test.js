@@ -5,7 +5,7 @@ import { createParser } from 'eventsource-parser'
 import { createLiveClient } from '../src/lib/live-client.js'
 import { createMockClient } from '../src/lib/mock-client.js'
 import { applyFrame, checkArtifact, checkSnapshot, ProtocolError, toFrame } from '../src/lib/run-state.js'
-import { readEvidence } from '../src/lib/artifact-details.js'
+import { claimValue, readEvidence, readUncertainty } from '../src/lib/artifact-details.js'
 import { watchRun } from '../src/lib/watch-run.js'
 import { createSessionAccess } from '../src/lib/session.js'
 import { authConfig } from '../src/lib/auth-config.js'
@@ -111,6 +111,18 @@ test('loads exact v1 artifact revisions and handles missing or unsafe evidence',
   assert.throws(() => checkArtifact(revised, revised.run_id, {
     ...revised.reference, input_artifact_ids: ['pricing_strategy'],
   }), ProtocolError)
+})
+
+test('evidence claim pointers resolve exact fields and do not substitute missing values', () => {
+  const content = { 'year/one': { '~values': [0, null] } }
+  assert.equal(claimValue(content, '/year~1one/~0values/0'), 0)
+  assert.equal(claimValue(content, '/year~1one/~0values/1'), null)
+  assert.equal(claimValue(content, '/year~1one/~0values/2'), undefined)
+  assert.equal(claimValue(content, '/__proto__/constructor'), undefined)
+  assert.deepEqual(readUncertainty({ limitations: ['No regional breakdown'], confidence: 0 }), [
+    { label: 'limitations', value: 'No regional breakdown' }, { label: 'confidence', value: 0 },
+  ])
+  assert.deepEqual(readUncertainty({ uncertainty: null }), [])
 })
 
 test('live approval, rejection, and revision are bound to the reviewed artifact IDs', async () => {
