@@ -5,6 +5,7 @@ import { FounderReview } from './FounderReview.jsx'
 import { Evaluations, OutputSection } from './OutputSection.jsx'
 import { watchRun } from './lib/watch-run.js'
 import { summarizeProgress } from './lib/run-progress.js'
+import { saveDownload } from './lib/exports.js'
 
 const initial = { snapshot: null, connection: 'loading', message: '' }
 
@@ -139,12 +140,7 @@ function Exports({ client, runId, partial }) {
     try {
       const { blob, filename } = await client.downloadExport(runId, format, { signal: request.signal })
       if (request.signal.aborted) return
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = filename
-      anchor.click()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      saveDownload(blob, filename)
       setState({ format: null, error: '' })
     } catch (error) {
       if (!request.signal.aborted) setState({ format: null, error: error.message })

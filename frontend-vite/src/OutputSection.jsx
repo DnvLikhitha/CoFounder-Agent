@@ -1,6 +1,7 @@
 import { ArtifactContent } from './ArtifactContent.jsx'
 import { readEvidence, webUrl } from './lib/artifact-details.js'
 import { useArtifact } from './lib/use-artifact.js'
+import { saveDownload } from './lib/exports.js'
 
 export function OutputSection({ artifacts, evaluations, client, runId, status, steps, activeId, onSelect, pricingReview }) {
   const order = new Map(steps.map((step, position) => [step.step_id, position]))
@@ -115,9 +116,20 @@ function Artifact({ reference, client, runId, evaluations, historical, staleInpu
           <button onClick={retry}>Retry artifact</button>
         </div>
       )}
-      {result?.artifact && <ArtifactDetail reference={reference} content={result.artifact.content} evaluations={evaluations} />}
+      {result?.artifact && <>
+        {client.supportsExports && <button onClick={() => downloadArtifact(result.artifact)}>Download artifact</button>}
+        <ArtifactDetail reference={reference} content={result.artifact.content} evaluations={evaluations} />
+      </>}
     </article>
   )
+}
+
+function downloadArtifact({ reference, content }) {
+  const type = reference.media_type
+  const json = type === 'application/json'
+  const extension = json ? 'json' : type === 'text/markdown' ? 'md' : 'txt'
+  const filename = `${reference.artifact_id.replace(/[^\w.-]/g, '_')}.${extension}`
+  saveDownload(new Blob([json ? JSON.stringify(content, null, 2) : content], { type }), filename)
 }
 
 function ArtifactDetail({ reference, content, evaluations }) {

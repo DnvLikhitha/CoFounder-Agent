@@ -7,6 +7,8 @@ import { createMockClient } from '../src/lib/mock-client.js'
 import { applyFrame, checkArtifact, checkSnapshot, ProtocolError, toFrame } from '../src/lib/run-state.js'
 import { readEvidence } from '../src/lib/artifact-details.js'
 import { watchRun } from '../src/lib/watch-run.js'
+import { createSessionAccess } from '../src/lib/session.js'
+import { authConfig } from '../src/lib/auth-config.js'
 
 function loadFixtures(scenario) {
   function read(file) {
@@ -24,26 +26,68 @@ function loadFixtures(scenario) {
 const fixtures = { succeeded: loadFixtures('succeeded'), partial: loadFixtures('partial'), revised: loadFixtures('revised') }
 const scenarios = Object.entries(fixtures)
 
-test('live authentication failure expires the session and owner-scoped 404 does not', async () => {
+test('browser configuration accepts public keys and rejects privileged keys and insecure origins', () => {
+  const env = { VITE_SUPABASE_URL: 'https://project.supabase.co/', VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test' }
+  assert.deepEqual(authConfig(env), { url: 'https://project.supabase.co', key: 'sb_publishable_test' })
+  assert.throws(() => authConfig({ ...env, VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_secret_test' }), /publishable key/)
+  const jwt = (role) => `header.${Buffer.from(JSON.stringify({ role })).toString('base64url')}.signature`
+  const anon = { VITE_SUPABASE_URL: env.VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY: jwt('anon') }
+  assert.equal(authConfig(anon).key, anon.VITE_SUPABASE_ANON_KEY)
+  assert.throws(() => authConfig({ ...anon, VITE_SUPABASE_ANON_KEY: jwt('service_role') }), /publishable key/)
+  assert.throws(() => authConfig({ ...env, VITE_SUPABASE_URL: 'http://project.supabase.co' }), /HTTPS/)
+})
+
+test('live authentication renews once, expires after rejection, and leaves 404 alone', async () => {
   let status = 401
   let notifications = 0
-  const client = createLiveClient(async () => Response.json({ error: { message: 'Denied' } }, { status }), {
-    accessToken: 'test-token',
-    onUnauthorized: () => { notifications += 1 },
+  const headers = []
+  const client = createLiveClient(async (_url, options) => {
+    headers.push(options.headers.Authorization)
+    return Response.json({ error: { message: 'Denied' } }, { status })
+  }, {
+    getToken: async () => 'test-token',
+    recover: async () => 'renewed',
+    reject: async () => { notifications += 1 },
   })
   const { run_id } = fixtures.succeeded.snapshot
   const controller = new AbortController()
   await assert.rejects(client.streamEvents(run_id, {
     after: 0, signal: controller.signal, onOpen() {}, onFrame() {},
   }), { status: 401 })
+  assert.deepEqual(headers, ['Bearer test-token', 'Bearer renewed'])
   assert.equal(notifications, 1)
   status = 404
   await assert.rejects(client.getRun(run_id), { status: 404 })
   assert.equal(notifications, 1)
   status = 401
   controller.abort()
-  await assert.rejects(client.getRun(run_id, { signal: controller.signal }), { status: 401 })
+  await assert.rejects(client.getRun(run_id, { signal: controller.signal }), { name: 'AbortError' })
   assert.equal(notifications, 1)
+})
+
+test('concurrent API failures share one refresh and a replaced account cannot replay a request', async () => {
+  let token = 'old'
+  let userId = 'owner'
+  let refreshes = 0
+  let expired = 0
+  function session() {
+    return { data: { session: { user: { id: userId }, access_token: token } } }
+  }
+  const auth = {
+    getSession: async () => session(),
+    refreshSession: async () => {
+      refreshes += 1
+      token = 'new'
+      return session()
+    },
+  }
+  const access = createSessionAccess(auth, userId, () => { expired += 1 })
+  assert.deepEqual(await Promise.all([access.recover('old'), access.recover('old')]), ['new', 'new'])
+  await access.reject('old')
+  userId = 'another-owner'
+  await assert.rejects(access.recover('new'), { status: 401 })
+  assert.equal(refreshes, 1)
+  assert.equal(expired, 0)
 })
 
 test('loads exact v1 artifact revisions and handles missing or unsafe evidence', () => {
@@ -95,6 +139,30 @@ test('live approval, rejection, and revision are bound to the reviewed artifact 
   ])
 })
 
+test('review retry after token refresh preserves the decision ID and artifact revision', async () => {
+  const { snapshot } = fixtures.revised
+  const payload = { decision_id: '10000000-0000-4000-8000-000000000008', decision: 'approve', comment: null }
+  const calls = []
+  const client = createLiveClient(async (url, options) => {
+    calls.push({ url, token: options.headers.Authorization, body: JSON.parse(options.body) })
+    if (calls.length === 1) return Response.json({}, { status: 401 })
+    return Response.json({})
+  }, {
+    getToken: async () => 'expired',
+    recover: async (token) => {
+      assert.equal(token, 'expired')
+      return 'renewed'
+    },
+  })
+  await client.decideReview(snapshot.run_id, 'pricing-review-2', payload, { expectedArtifactIds: ['pricing_strategy-r2'] })
+  const url = `/api/v1/runs/${snapshot.run_id}/reviews/pricing-review-2/decisions`
+  const body = { ...payload, artifact_ids: ['pricing_strategy-r2'] }
+  assert.deepEqual(calls, [
+    { url, token: 'Bearer expired', body },
+    { url, token: 'Bearer renewed', body },
+  ])
+})
+
 test('authenticated client includes a bearer token on REST, events, and downloads', async () => {
   const { snapshot, artifacts, wire } = fixtures.succeeded
   const path = `/api/v1/runs/${snapshot.run_id}`
@@ -111,7 +179,7 @@ test('authenticated client includes a bearer token on REST, events, and download
     if (url.endsWith('/exports/markdown')) return new Response('# Plan')
     if (options.method === 'POST') assert.equal(options.headers['Content-Type'], 'application/json')
     return Response.json(snapshot)
-  }, { accessToken: 'test-token' })
+  }, { getToken: async () => 'test-token' })
   const { signal } = new AbortController()
   await client.startRun(snapshot.input, { signal })
   await client.getRun(snapshot.run_id, { signal })
@@ -204,6 +272,43 @@ test('live reconnect gets a fresh snapshot and replays over the relative API pat
   assert.equal(final.artifacts[0].kind, 'market_research')
   assert.equal(final.evaluations[0].score, 0.8)
   assert.equal(final.steps.find(({ step_id }) => step_id === 'summary').status, 'failed')
+})
+
+test('rate-limited snapshots and streams recover automatically and finish replay', async () => {
+  const { snapshot, final, wire } = fixtures.succeeded
+  const rateLimited = () => new Response(null, { status: 429, headers: { 'Retry-After': '0' } })
+  let snapshotReads = 0
+  let streamReads = 0
+  const client = createLiveClient(async (url) => {
+    if (!url.includes('/events?')) return ++snapshotReads === 1 ? rateLimited() : Response.json(snapshot)
+    if (++streamReads === 1) return rateLimited()
+    return new Response(wire, { headers: { 'Content-Type': 'text/event-stream' } })
+  })
+  const updates = []
+  await watchRun(client, snapshot.run_id, (update) => updates.push(update), { retryDelay: () => 0 }).done
+  assert.equal(snapshotReads, 3)
+  assert.equal(streamReads, 2)
+  assert.deepEqual(updates.filter(({ connection }) => connection === 'reconnecting').map(({ message }) => message),
+    ['Too many requests. Reconnecting…', 'Too many requests. Reconnecting…'])
+  assert.deepEqual(updates.at(-1), { snapshot: final, connection: 'closed', message: '' })
+})
+
+test('rate-limited reconnect uses Retry-After and stops at the retry limit', async (t) => {
+  const { run_id } = fixtures.succeeded.snapshot
+  const timer = t.mock.method(globalThis, 'setTimeout', (callback) => {
+    queueMicrotask(callback)
+  })
+  let reads = 0
+  const client = createLiveClient(async () => {
+    reads += 1
+    return new Response(null, { status: 429, headers: { 'Retry-After': '2' } })
+  })
+  const updates = []
+  await watchRun(client, run_id, (update) => updates.push(update), { retryDelay: () => 100, maxRetries: 1 }).done
+  assert.deepEqual(timer.mock.calls.map(({ arguments: [, ms] }) => ms), [2000])
+  assert.equal(reads, 2)
+  assert.equal(updates.at(-1).connection, 'error')
+  assert.match(updates.at(-1).message, /Too many requests/)
 })
 
 test('terminal refresh does not open a stream, and a 404 does not retry', async () => {

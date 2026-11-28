@@ -1,4 +1,4 @@
-export const mockMode = import.meta.env.MODE === 'mock'
+export const mockMode = import.meta.env.DEV && import.meta.env.MODE === 'mock'
 const loadMock = async () => {
   const [{ createMockClient }, { fixtures }] = await Promise.all([
     import('./mock-client.js'),

@@ -9,11 +9,12 @@
  * The mock review preview accepts expectedArtifactIds in its request options.
  */
 export class ApiError extends Error {
-  constructor(message, { status, code, retryable } = {}) {
+  constructor(message, { status, code, retryable, retryAfterMs } = {}) {
     super(message)
     this.status = status
     this.code = code
     this.retryable = retryable
+    this.retryAfterMs = retryAfterMs
   }
 }
 
