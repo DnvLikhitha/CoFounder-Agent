@@ -195,6 +195,46 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(replay(initial, events), final)
         self.assertEqual(sum(event["type"] == "review.requested" for event in events), 2)
 
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_revised_live_forecast_cannot_publish_draft_financials(self):
+        run = self.database.submit("alice", "stale-forecast", self.body, version=REVIEWED_VERSION,
+                                   graph_mode="live", pricing_review=True)
+        run_id = run["run_id"]
+        execute_claim(self.database, self.database.claim(), demo_provider)
+        pricing = self.database.artifact("alice", run_id, "pricing_strategy")["content"]
+        tier = pricing["tiers"][0]["tier_name"]
+        for action in ("revise", "approve"):
+            pending = self.database.snapshot("alice", run_id)["pending_review"]
+            decision = dict(decision_id=str(uuid4()), decision=action, artifact_ids=pending["artifact_ids"])
+            if action == "revise":
+                decision["pricing_revision"] = dict(tier_name=tier, price_monthly_usd=37, price_annual_usd=370)
+            self.database.decide_review("alice", run_id, pending["review_id"], decision)
+
+        draft = self.database.artifact("alice", run_id, "financial_projections")["content"]
+        claim = self.database.claim()
+        self.database.begin_step(*claim, "financial_projections")
+        with self.assertRaises(InvalidOutput):
+            self.database.complete_step(*claim, "financial_projections", draft)
+
+        def stale_provider(step, body, upstream):
+            self.assertEqual(step, "financial_projections")
+            candidate = demo_provider(step, body, upstream)
+            # Copy the approved price table but keep the original forecast's MRR, making ARR internally consistent.
+            for row, original in zip(candidate["monthly_projections"], draft["monthly_projections"], strict=True):
+                row.update(mrr_usd=original["mrr_usd"], revenue_usd=original["mrr_usd"])
+            candidate["arr_month_12_usd"] = draft["arr_month_12_usd"]
+            return candidate
+
+        execute_claim(self.database, claim, stale_provider)
+        final = self.database.snapshot("alice", run_id)
+        states = {step["step_id"]: step for step in final["steps"]}
+        self.assertEqual(final["status"], "partial")
+        self.assertEqual(states["financial_projections"]["error"]["code"], "invalid_output")
+        self.assertEqual(states["pitch_deck"]["error"]["code"], "dependency_blocked")
+        self.assertEqual(states["executive_summary"]["error"]["code"], "dependency_blocked")
+        self.assertEqual([a["artifact_id"] for a in final["artifacts"] if a["step_id"] == "financial_projections"],
+                         ["financial_projections"])
+
     def test_reject_pricing_blocks_dependents_but_keeps_draft_history(self):
         run = self.database.submit("alice", "reject-pricing", self.body, version=REVIEWED_VERSION,
                                    graph_mode="fake", pricing_review=True)

@@ -179,12 +179,14 @@ class LiveAgentTests(unittest.TestCase):
         body = {"problem": "Find internships for university students."}
         llm = SimpleNamespace(complete=AsyncMock(return_value=json.dumps(fixture[step_id])))
         with patch.object(LIVE_STEPS[step_id].agent, "fetch_research", new=AsyncMock(return_value="")):
-            asyncio.run(live_agents.run_reviewed_agent(step_id, body, upstream, llm))
+            asyncio.run(live_agents.run_audited_forecast_agent(step_id, body, upstream, llm))
             reviewed = llm.complete.await_args.args[0]
             asyncio.run(live_agents.run_agent(step_id, body, upstream, llm))
             historical = llm.complete.await_args.args[0]
         self.assertIn('"price_annual_usd": 369.5', reviewed)
         self.assertIn('"price_monthly_usd": 37', reviewed)
+        self.assertIn("tier_customers", reviewed)
+        self.assertIn("pricing_assumptions", reviewed)
         self.assertNotIn('"price_annual_usd": 369.5', historical)
 
     def test_settings_require_explicit_mode_and_groq_credentials(self):

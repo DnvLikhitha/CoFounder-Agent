@@ -425,6 +425,8 @@ class Store:
                     upstream[dependency] = connection.execute(
                         "SELECT body FROM v1_artifacts WHERE run_id=%s AND artifact_id=%s",
                         (run_id, refs[dependency]["artifact_id"])).fetchone()["body"]
+            if domain_errors(step_id, content, {name: row["content"] for name, row in upstream.items()}):
+                raise workflow.InvalidOutput(step_id)
             reference.update(revision=revision, supersedes_artifact_id=history[-1]["artifact_id"] if history else None,
                              input_artifact_ids=[row["reference"]["artifact_id"] for row in upstream.values()])
         artifact = dict(run_id=run_id, reference=reference, content=content)
@@ -448,8 +450,6 @@ class Store:
             if step["status"] != "running":
                 raise StoreError(409, "state_conflict", "Step has not started")
             workflow.validate_output(version, step_id, content)
-            if version == workflow.REVIEWED_VERSION and domain_errors(step_id, content):
-                raise workflow.InvalidOutput(step_id)
             timestamp = now(connection)
             artifact, upstream = self._write_artifact(connection, snapshot, step_id, content, timestamp, partial=partial)
             error = dict(code="incomplete_output", message="Provider returned incomplete output",

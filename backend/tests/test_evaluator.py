@@ -2,14 +2,57 @@
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import AsyncMock, patch
 
-from backend.run_worker.evaluator import DIMENSIONS, domain_errors, evidence_links, heuristic
+from backend.run_worker.evaluator import DIMENSIONS, domain_errors, evidence_links, heuristic, judge_provider
 from backend.run_worker.workflow import LIVE_STEPS, REVIEWED_VERSION, InvalidOutput, validate_output
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evaluation_cases.json"
 
 
 class DeterministicEvaluationTests(unittest.TestCase):
+    def test_judge_preserves_artifact_and_marks_context_dependent_checks_when_inputs_are_omitted(self):
+        content = {"slides": [{"speaker_notes": 'Detailed "notes" ' * 480}, {"title": "Final slide"}]}
+        upstream = {"financial_projections": {"note": "x" * 18_000}, "pricing_strategy": {"tier": "Starter"}}
+        scores = {name: 0 if name in {"consistency", "grounding"} else 2 for name in DIMENSIONS}
+        with patch("backend.llm.client.LLMClient") as client:
+            call = client.return_value.complete = AsyncMock(return_value=json.dumps(scores))
+            evaluation = judge_provider("pitch_deck", {"input": {}, "content": content}, upstream,
+                                        database=None, claim=("run", "claim"), profile=None, timeout=2)
+        prompt = call.await_args.args[0]
+        self.assertLessEqual(len(prompt), 18_000)
+        payload = json.loads(prompt)
+        self.assertEqual(payload["artifact"], content)
+        self.assertEqual(payload["upstream"], {"pricing_strategy": upstream["pricing_strategy"]})
+        self.assertEqual(payload["omitted_upstream"], ["financial_projections"])
+        self.assertEqual(evaluation["outcome"], "needs_review")
+        self.assertEqual({item["dimension"] for item in evaluation["dimensions"] if item["outcome"] == "needs_review"},
+                         {"consistency", "grounding"})
+
+    def test_oversized_artifact_skips_the_optional_judge_before_dispatch(self):
+        with patch("backend.llm.client.LLMClient") as client:
+            evaluation = judge_provider("database_schema", {"input": {}, "content": {"sql_schema": "x" * 18_001}},
+                                        {}, database=None, claim=("run", "claim"), profile=None, timeout=2)
+        client.assert_not_called()
+        self.assertEqual(evaluation["outcome"], "not_evaluated")
+
+    def test_revised_forecast_checks_annual_allocations_and_stale_revenue(self):
+        from backend.run_worker.graph import demo_provider
+
+        pricing = demo_provider("pricing_strategy", {}, {})
+        tier = pricing["tiers"][0]
+        tier.update(price_monthly_usd=37, price_annual_usd=370)
+        pricing["founder_price_revision"] = tier
+        upstream = {"pricing_strategy": pricing}
+        forecast = demo_provider("financial_projections", {}, upstream)
+        row = forecast["monthly_projections"][0]
+        row["tier_customers"][tier["tier_name"]] = {"monthly": 0, "annual": 1}
+        row.update(mrr_usd=30.83, revenue_usd=30.83)
+        forecast["total_12mo_revenue_usd"] = 2879.83
+        self.assertEqual(domain_errors("financial_projections", forecast, upstream), [])
+        row.update(mrr_usd=125, revenue_usd=125)
+        self.assertIn("approved prices", domain_errors("financial_projections", forecast, upstream)[0])
+
     def test_all_live_schemas_reject_empty_output_and_demo_passes_domain_checks(self):
         from backend.run_worker.graph import demo_provider
 

@@ -13,10 +13,11 @@ from langsmith import tracing_context
 
 from backend.config import settings
 from backend.run_worker.checkpoints import ClaimCheckpointer, checkpoint_schema_ready
+from backend.run_worker.evaluator import domain_errors
+from backend.run_worker.forecast_validation import approved_prices
 from backend.run_worker.ledger import BudgetExceeded
 from backend.run_worker.provider_call import ClaimCalls
 from backend.run_worker.store import LostClaim
-from backend.run_worker.evaluator import domain_errors
 from backend.run_worker.workflow import (
     REVIEWED_VERSION, LIVE_STEPS, InvalidOutput, PartialOutput, ProviderFailure, ProviderTimeout,
     check_graph, validate_output,
@@ -163,8 +164,11 @@ def demo_provider(step_id, body, upstream):
         for row in sample["monthly_projections"]:
             projected = amount * row["total_customers"]
             row["net_profit_usd"] += projected - row["mrr_usd"]
-            row["mrr_usd"] = projected
-        sample.update(arr_month_12_usd=sample["monthly_projections"][-1]["mrr_usd"] * 12,
+            row.update(mrr_usd=projected, revenue_usd=projected,
+                       tier_customers={revised["tier_name"]: {"monthly": row["total_customers"], "annual": 0}})
+        sample.update(pricing_assumptions=approved_prices(upstream[PRICING]),
+                      arr_month_12_usd=sample["monthly_projections"][-1]["mrr_usd"] * 12,
+                      total_12mo_revenue_usd=sum(row["revenue_usd"] for row in sample["monthly_projections"]),
                       breakeven_month=next((row["month"] for row in sample["monthly_projections"]
                                             if row["net_profit_usd"] >= 0), 0),
                       ltv_usd=None, ltv_cac_ratio=None,
@@ -220,7 +224,7 @@ def run_agent_node(step_id, state, *, database, claim, invoke_provider, judge, c
                 judged = None
                 if state["workflow_version"] == REVIEWED_VERSION:
                     validate_output(REVIEWED_VERSION, step_id, content)
-                    errors = domain_errors(step_id, content)
+                    errors = domain_errors(step_id, content, inputs[1])
                     if errors:
                         database.fail(*claim, step_id, invalid_output=True, validation_reason=errors[0])
                         return {"outcomes": {step_id: database.graph_step_outcome(*claim, step_id)}}
