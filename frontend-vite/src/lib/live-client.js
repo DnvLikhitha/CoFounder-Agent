@@ -77,8 +77,6 @@ export function createLiveClient(fetcher = globalThis.fetch, session) {
   }
 
   return {
-    supportsExports: true,
-    supportsPricingRevision: true,
     startRun(input, { signal, idempotencyKey } = {}) {
       return post(runsPath, input, signal, idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined)
     },

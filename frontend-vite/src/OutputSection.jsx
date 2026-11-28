@@ -158,7 +158,7 @@ function Artifact({ reference, client, runId, evaluations, historical, staleInpu
         </div>
       )}
       {result?.artifact && <>
-        {client.supportsExports && <button onClick={() => downloadArtifact(result.artifact)}>Download artifact</button>}
+        <button onClick={() => downloadArtifact(result.artifact)}>Download artifact</button>
         {comparison && <RevisionComparison key={comparison.artifact_id} current={result.artifact}
           other={comparison} client={client} runId={runId} />}
         <ArtifactDetail reference={reference} content={result.artifact.content} evaluations={evaluations}

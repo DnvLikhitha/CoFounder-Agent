@@ -149,7 +149,7 @@ Use Python 3.11, Node 22.21.1+ on the 22.x line or Node 24, and PostgreSQL. Inst
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
 npm.cmd --prefix frontend-vite ci
-Copy-Item backend/.env.example backend/.env
+if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 ```
 
 Use an existing local PostgreSQL instance or run `docker compose up -d postgres`. The compose service binds to loopback. Edit the ignored `backend/.env` with its direct psycopg `postgresql://` DSN. Run the repeatable migrations, then start the API and worker in separate PowerShell terminals from the repo root.
@@ -177,13 +177,12 @@ VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_public_key
 Start the React app in another terminal and open the printed URL.
 
 ```powershell
-npm.cmd --prefix frontend-vite run dev:live
+npm.cmd --prefix frontend-vite run dev
 ```
 
 ### Choose a run mode
 
 - **Local full-stack demo.** Set `V1_PROVIDER_MODE=fake` for the API and worker. React signs in, talks to FastAPI, and runs all 16 nodes with deterministic values. Reports label these values as a fake-provider demonstration.
-- **Frontend-only preview.** Run `npm.cmd --prefix frontend-vite run dev:mock` to browse labelled fixtures without setting up PostgreSQL or sign-in. The production build uses the real API client.
 - **Groq mode.** Set `V1_PROVIDER_MODE=live` and an authorized `GROQ_API_KEY`, pick test budget limits, and restart both backend processes. Add optional `SERPAPI_API_KEY` and `FRED_API_KEY` only for intended research use.
 
 | Setting | Location and purpose |
@@ -191,7 +190,7 @@ npm.cmd --prefix frontend-vite run dev:live
 | `DATABASE_URL` | Backend direct PostgreSQL connection for application rows and checkpoints |
 | `ENVIRONMENT`, `V1_PROVIDER_MODE` | Backend environment and explicit fake/live execution selection |
 | `SUPABASE_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` | Verified issuer and public browser sign-in configuration |
-| `V1_JWT_SECRET`, `V1_JWT_ISSUER`, `V1_JWT_AUDIENCE` | Local API test issuer when Supabase is unconfigured. Browser sign-in uses Supabase |
+| `V1_ALLOW_TEST_JWT`, `V1_JWT_SECRET`, `V1_JWT_ISSUER`, `V1_JWT_AUDIENCE` | Opt-in API test issuer for development, local, or test environments without Supabase. Browser sign-in uses Supabase |
 | `GROQ_API_KEY`, `SERPAPI_API_KEY`, `FRED_API_KEY` | Server-side provider and optional research credentials |
 | `MAX_CONCURRENT_RUNS`, `V1_STEP_CONCURRENCY` | Shared worker admission and parallel agents per run |
 | `V1_RUN_TOKEN_LIMIT`, `V1_RUN_COST_LIMIT_NANOUSD`, `V1_PROVIDER_TIMEOUT_SECONDS` | Per-run budgets and provider deadline |
@@ -210,6 +209,10 @@ FastAPI exposes `/health` and `/ready`. Open `/api/v1/docs` for REST. The v1 run
 - `shared/contracts/` contains the published API and event schemas, examples, and fixtures.
 - `docs/` contains the final verification record and historical release decisions.
 
+## Older runs
+
+New submissions always use the 16-agent reviewed graph. Historical 16-agent workflow and prompt pins let unfinished runs resume on their original graph. Completed four-agent demo records remain available in history, with their stored artifacts and SSE events. Reports for those records return an explanatory conflict. If an old database has an unfinished four-agent demo, finish it using the previous worker before applying the upgrade.
+
 ## Checks and measured results
 
 ```powershell
@@ -219,7 +222,7 @@ $env:TEST_DATABASE_URL = 'postgresql://<test-user>:<password>@localhost:5432/<te
 .\.venv\Scripts\python.exe -m backend.contracts.tool --check --check-runtime
 npm.cmd --prefix frontend-vite run lint
 npm.cmd --prefix frontend-vite test
-npm.cmd --prefix frontend-vite run build:live
+npm.cmd --prefix frontend-vite run build
 $env:PLAYWRIGHT_CHROMIUM_CHANNEL = 'msedge'
 npm.cmd --prefix frontend-vite run test:browser
 ```

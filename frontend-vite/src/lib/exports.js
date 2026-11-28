@@ -1,5 +1,8 @@
 import { ProtocolError } from './run-state.js'
 
+// Matches RETIRED_DEMO_VERSIONS in backend/run_worker/workflow.py.
+export const retiredDemoVersions = new Set(['fake-business-v1', 'fake-business-v2'])
+
 export function startDownload(url, filename) {
   const anchor = document.createElement('a')
   anchor.href = url

@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { createParser } from 'eventsource-parser'
 import { createLiveClient } from '../src/lib/live-client.js'
-import { createMockClient } from '../src/lib/mock-client.js'
 import { applyFrame, checkArtifact, checkSnapshot, ProtocolError, toFrame } from '../src/lib/run-state.js'
 import { claimValue, readEvidence, readUncertainty } from '../src/lib/artifact-details.js'
 import { watchRun } from '../src/lib/watch-run.js'
@@ -405,59 +404,59 @@ test('repeated contract mismatches surface as incompatibility', async () => {
   assert.match(updates.at(-1).message, /incompatible run data/)
 })
 
-test('mock runs survive a reload at review and retain partial artifacts after approval', async () => {
-  let time = Date.parse('2026-11-27T12:00:00Z')
-  const records = new Map()
-  const storage = { getItem: (key) => records.get(key), setItem: (key, value) => records.set(key, value) }
-  const runId = '00000000-0000-4000-8000-000000000003'
-  const config = { fixtures: { succeeded: fixtures.succeeded, partial: fixtures.partial },
-    storage, now: () => time, makeId: () => runId, interval: 100 }
-  const mock = createMockClient(config)
-  const input = { problem: 'Find internships for university students.', domain: null, geography: null }
-  const queued = await mock.startRun(input, { scenario: 'partial' })
-  assert.equal(checkSnapshot(queued, runId).status, 'queued')
-  time += 750
-  const reloaded = createMockClient(config)
-  const awaiting = await reloaded.getRun(runId)
-  assert.equal(checkSnapshot(awaiting, runId).status, 'awaiting_review')
-  assert.equal(awaiting.last_event_id, 7)
-  const revision = { decision_id: '10000000-0000-4000-8000-000000000004', decision: 'revise', comment: 'Add survey evidence.' }
-  await assert.rejects(reloaded.decideReview(runId, awaiting.pending_review.review_id, revision, {
-    expectedArtifactIds: ['stale-revision'],
-  }), { status: 409 })
-  const preview = await reloaded.decideReview(runId, awaiting.pending_review.review_id, revision, {
-    expectedArtifactIds: awaiting.pending_review.artifact_ids,
-  })
-  assert.deepEqual(preview.artifact_ids, ['research'])
-  assert.deepEqual(mock.getRevisionPreview(runId, awaiting.pending_review.review_id), preview)
+test('an API review survives reload and replays to a partial result', async () => {
+  const { snapshot, events, final, artifacts } = fixtures.partial
+  const runId = snapshot.run_id
+  const awaiting = events.slice(0, 7).map(toFrame).reduce(applyFrame, snapshot)
+  const receipt = events[7].data
+  let approved = false
+  const transport = async (path, options) => {
+    const url = new URL(path, 'http://test.local')
+    if (url.pathname === '/api/v1/runs') {
+      if (url.searchParams.get('cursor') === 'partial-page-2') {
+        return Response.json({ runs: [fixtures.succeeded.final], next_cursor: null })
+      }
+      assert.equal(url.searchParams.get('limit'), '1')
+      return Response.json({ runs: [final], next_cursor: 'partial-page-2' })
+    }
+    if (path.endsWith('/decisions')) {
+      if (JSON.parse(options.body).decision !== 'approve') return new Response(null, { status: 409 })
+      assert.deepEqual(JSON.parse(options.body).artifact_ids, awaiting.pending_review.artifact_ids)
+      approved = true
+      return Response.json(receipt)
+    }
+    if (path.endsWith('/events?after=7')) {
+      const body = events.slice(7).map(({ event_id, type, ...rest }) =>
+        `id: ${event_id}\nevent: ${type}\ndata: ${JSON.stringify({ event_id, type, ...rest })}\n\n`).join('')
+      return new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+    }
+    if (path.endsWith('/artifacts/research')) return Response.json(artifacts[0])
+    if (path.endsWith('/artifacts/summary')) return new Response(null, { status: 404 })
+    assert.ok(path.endsWith(runId))
+    return Response.json(approved ? final : awaiting)
+  }
+  const client = createLiveClient(transport)
+  const reloaded = createLiveClient(transport)
+  assert.deepEqual(await client.getRun(runId), awaiting)
   assert.deepEqual(await reloaded.getRun(runId), awaiting)
-  const decision = { decision_id: '10000000-0000-4000-8000-000000000002', decision: 'approve', comment: null }
-  const receipt = await reloaded.decideReview(runId, awaiting.pending_review.review_id, decision)
-  assert.equal(receipt.event_id, 8)
-  assert.deepEqual(await mock.decideReview(runId, awaiting.pending_review.review_id, decision), receipt)
-  await assert.rejects(mock.decideReview(runId, awaiting.pending_review.review_id, { ...decision, decision: 'reject' }),
-    { status: 409 })
-  time += 1000
-  const controller = new AbortController()
+  const reviewId = awaiting.pending_review.review_id
+  const decision = { decision_id: receipt.decision.decision_id, decision: 'approve', comment: null }
+  const options = { expectedArtifactIds: awaiting.pending_review.artifact_ids }
+  assert.deepEqual(await reloaded.decideReview(runId, reviewId, decision, options), receipt)
+  assert.deepEqual(await client.decideReview(runId, reviewId, decision, options), receipt)
+  await assert.rejects(client.decideReview(runId, reviewId, { ...decision, decision: 'reject' }, options), { status: 409 })
   let replayed = awaiting
-  await mock.streamEvents(runId, {
-    after: awaiting.last_event_id,
-    signal: controller.signal,
+  await reloaded.streamEvents(runId, { after: awaiting.last_event_id, signal: new AbortController().signal,
     onOpen() {},
-    onFrame(frame) { replayed = applyFrame(replayed, frame) },
-  })
-  const final = await reloaded.getRun(runId)
-  assert.deepEqual(replayed, final)
-  assert.equal(final.status, 'partial')
-  assert.equal(final.artifacts.length, 1)
-  assert.equal(final.evaluations[0].score, 0.8)
-  const artifact = await mock.getArtifact(runId, 'research')
-  assert.equal(artifact.reference.href, `/api/v1/runs/${runId}/artifacts/research`)
-  assert.deepEqual(artifact.content, fixtures.partial.artifacts[0].content)
-  await assert.rejects(mock.getArtifact(runId, 'summary'), { status: 404 })
-  const firstPage = await mock.listRuns({ limit: 1 })
+    onFrame(frame) { replayed = applyFrame(replayed, frame) } })
+  assert.deepEqual(replayed, await reloaded.getRun(runId))
+  assert.equal(replayed.status, 'partial')
+  assert.equal(replayed.artifacts.length, 1)
+  assert.equal(replayed.evaluations[0].score, 0.8)
+  assert.deepEqual(await client.getArtifact(runId, 'research'), artifacts[0])
+  await assert.rejects(client.getArtifact(runId, 'summary'), { status: 404 })
+  const firstPage = await client.listRuns({ limit: 1 })
   assert.equal(firstPage.runs[0].run_id, runId)
-  const lastPage = await mock.listRuns({ cursor: firstPage.next_cursor })
-  assert.equal(lastPage.runs.length, 2)
-  assert.equal(lastPage.next_cursor, null)
+  const lastPage = await reloaded.listRuns({ cursor: firstPage.next_cursor })
+  assert.deepEqual(lastPage, { runs: [fixtures.succeeded.final], next_cursor: null })
 })

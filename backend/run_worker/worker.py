@@ -11,7 +11,7 @@ from backend.llm.profiles import PROFILES
 from backend.run_worker.live_agents import PROMPT_BUNDLES, live_provider, verify_prompt_bundles
 from backend.run_worker.provider_call import ClaimCalls, call_with_deadline
 from backend.run_worker.store import LostClaim, Store, StoreError
-from backend.run_worker.workflow import FAKE_VERSIONS, GRAPH_VERSIONS, LIVE_VERSION, fake_provider
+from backend.run_worker.workflow import GRAPH_VERSIONS, LIVE_VERSION
 from backend.safe_logging import configure_safe_logging
 
 
@@ -29,12 +29,9 @@ def execute_claim(store, claim, provider=None, lease_seconds=30, heartbeat_mode=
     from backend.run_worker.graph import demo_provider, execute_graph
 
     configuration = store.graph_configuration(*claim)
-    version = configuration["manifest"]["version"]
     with ClaimCalls() as calls:
         if provider is None and configuration["graph_mode"] == "fake":
             execute = demo_provider
-        elif provider is None and version in FAKE_VERSIONS:
-            execute = fake_provider
         else:
             provider = provider or pinned_live_provider(store, claim, configuration)
 
@@ -72,8 +69,14 @@ def main():
         claim_options = dict(versions=(LIVE_VERSION, *GRAPH_VERSIONS), prompt_versions=PROMPT_BUNDLES,
                              model_profiles=PROFILES)
     else:
-        claim_options = dict(versions=(*FAKE_VERSIONS, *GRAPH_VERSIONS))
+        claim_options = dict(versions=GRAPH_VERSIONS)
     store = Store(settings.database_url)
+    try:
+        store.check_retired_runs()
+    except StoreError as exc:
+        parser.error(str(exc))
+    except psycopg.Error:
+        parser.error("Could not check workflow compatibility. Apply the worker schema and check PostgreSQL.")
     while True:
         try:
             store.heartbeat(mode)

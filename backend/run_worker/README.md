@@ -1,10 +1,10 @@
 # PostgreSQL run worker
 
-New live and fake runs use the 16-agent `startup-reviewed-v1` manifest. Live mode uses Groq and fake mode supplies deterministic fixtures. PostgreSQL stores the authoritative snapshot, artifacts, events, and claim. The separate worker advances the graph and saves PostgreSQL checkpoints. Earlier LangGraph runs keep their existing topology and checkpoint format. See the [LangGraph architecture](../../docs/langgraph-orchestration.md) for the dependency graph and recovery behavior.
+New live and fake runs use the 16-agent `startup-reviewed-v1` manifest. Live mode uses Groq and fake mode supplies deterministic fixtures. PostgreSQL stores the authoritative snapshot, artifacts, events, and claim. The separate worker advances the graph and saves PostgreSQL checkpoints. Earlier LangGraph runs keep their existing topology and checkpoint format. See the [LangGraph architecture](../../README.md#current-compiled-dependency-graph) for the dependency graph and recovery behavior.
 
 ## Production configuration
 
-Set `ENVIRONMENT=production`, `V1_PROVIDER_MODE=live`, `DATABASE_URL`, `GROQ_API_KEY`, and `SUPABASE_URL` to the exact HTTPS origin used by Supabase Auth. Configure that project to issue ES256 or RS256 user access tokens. The API validates the signature against the project's JWKS, requires the project issuer, `authenticated` audience and role, expiration, issued-at time, and a user and session UUID. It caches public keys for five minutes and refreshes on unknown key IDs, with a ten-second refresh cooldown. Allow outbound HTTPS to the configured project. Local HS256 tokens are limited to development, local, and test environments. [Supabase signing keys](https://supabase.com/docs/guides/auth/signing-keys)
+Set `ENVIRONMENT=production`, `V1_PROVIDER_MODE=live`, `DATABASE_URL`, `GROQ_API_KEY`, and `SUPABASE_URL` to the exact HTTPS origin used by Supabase Auth. Configure that project to issue ES256 or RS256 user access tokens. The API validates the signature against the project's JWKS, requires the project issuer, `authenticated` audience and role, expiration, issued-at time, and a user and session UUID. It caches public keys for five minutes and refreshes on unknown key IDs, with a ten-second refresh cooldown. Allow outbound HTTPS to the configured project. Local HS256 tokens require V1_ALLOW_TEST_JWT=true, no Supabase URL, and a development, local, or test environment. [Supabase signing keys](https://supabase.com/docs/guides/auth/signing-keys)
 
 Every run operation is scoped to the verified owner. Production storage keys include the issuer and subject UUID. Runs created by the earlier local issuer retain their local ownership and need a separately verified account mapping to become visible in production. The application serves only v1 run routes. Legacy history, result, delete, stream, and export paths return 404. Legacy data remains in its original tables.
 
@@ -34,7 +34,7 @@ Each step completion inserts one immutable artifact, updates step state, appends
 
 LangGraph schedules up to `V1_STEP_CONCURRENCY` steps per run, with a default of two and a permitted range of one to eight. The queue serializes admission against `MAX_CONCURRENT_RUNS` across worker processes, with a default of five. Market and competitor research can overlap. Pricing and risk can overlap after business model commits and any optional inputs settle. Financials waits for the committed business model and pricing artifacts. Other dependencies are in `workflow.py`. Registration and execution reject missing dependencies and cycles.
 
-The submission pins its manifest and provider mode. LangGraph drains unfinished `live-startup-v1` jobs and historical four-step demos using their frozen manifests. It recovers existing committed outcomes and creates checkpoints on the first claim after cleanup. New submissions in both modes use LangGraph and resume only their own version. When changing a step contract, add a workflow version and retain earlier specifications while jobs can still claim them. The graph waits for optional producers to settle and passes their artifacts when they succeed. The store supplies required inputs from successful committed artifacts.
+The submission pins its manifest and provider mode. LangGraph drains unfinished `live-startup-v1` jobs using their frozen manifests and committed outcomes. The migration and worker startup guard reject unfinished retired four-agent demos. Complete them with the previous worker. Terminal records retain their artifacts, history and events. New submissions in both modes use LangGraph and resume only their own version. When changing a step contract, add a workflow version and retain earlier specifications while jobs can still claim them. The graph waits for optional producers to settle and passes their artifacts when they succeed. The store supplies required inputs from successful committed artifacts.
 
 Each live step uses the existing agent's research tools, prompt builder, and parser with a frozen input adapter hydrated from committed artifacts. Each research call returns its evidence to the node adapter. Validated JSON is the only path to successful publication. SerpAPI and FRED evidence is persisted separately from model estimates in `tool_evidence`, and `analysis_basis` records whether such evidence was available. Financial assumptions retain their existing `assumptions` field. These labels do not independently verify model claims.
 
@@ -54,7 +54,7 @@ The v1 fingerprint covers the registered renderer, system prompt, live step depe
 
 ## React integration
 
-The existing v1 OpenAPI and SSE schemas already support variable-length manifests and arbitrary JSON artifact content. In live mode, derive labels, phase groups, and required dependency edges from the run's 16-step manifest. Each step's ID is also its artifact kind. `problem_refined` is an object carrying a `problem_refined` string, `customer_personas` is an array, and `pitch_deck` carries a `slides` array. The deterministic fixture in `backend/run_worker/demo_outputs.json` also drives the simulated Groq transport in tests. Existing four-step demo records remain available to their owners. V1 exports render committed live content and include partial-result notices when steps fail. PPTX includes the generated slides and speaker notes when available.
+The existing v1 OpenAPI and SSE schemas already support variable-length manifests and arbitrary JSON artifact content. In live mode, derive labels, phase groups, and required dependency edges from the run's 16-step manifest. Each step's ID is also its artifact kind. `problem_refined` is an object carrying a `problem_refined` string, `customer_personas` is an array, and `pitch_deck` carries a `slides` array. The deterministic fixture in `backend/run_worker/demo_outputs.json` also drives the simulated Groq transport in tests. Older four-agent reports are retired. Their saved artifacts remain available to their owners. V1 exports render committed live content and include partial-result notices when steps fail. PPTX includes the generated slides and speaker notes when available.
 
 ## Local setup
 
@@ -62,6 +62,7 @@ Use Python 3.11 and PostgreSQL. The root docker-compose.yml provides a loopback-
 
 ```dotenv
 DATABASE_URL=postgresql://<user>:<password>@localhost:5432/<database>
+V1_ALLOW_TEST_JWT=true
 V1_JWT_SECRET=<random-secret-at-least-32-characters>
 V1_JWT_ISSUER=cofounder-agent
 V1_JWT_AUDIENCE=cofounder-api
@@ -73,7 +74,7 @@ SERPAPI_API_KEY=<optional-search-key>
 FRED_API_KEY=<optional-macro-data-key>
 ```
 
-Set SUPABASE_URL to an isolated Supabase origin for browser sign-in. The local HS256 settings in the example apply to API tests with SUPABASE_URL unset. Use the same provider mode and database in the API and worker. Set `V1_PROVIDER_MODE=fake` explicitly for a provider-free demonstration in development. With optional research keys omitted, agents record that they lacked external evidence.
+Set SUPABASE_URL to an isolated Supabase origin for browser sign-in. The test JWT settings in the example apply to API tests with SUPABASE_URL unset. Use the same provider mode and database in the API and worker. Set `V1_PROVIDER_MODE=fake` explicitly for a provider-free demonstration in development. With optional research keys omitted, agents record that they lacked external evidence.
 
 From the repository root in PowerShell, install dependencies, migrate, and start the API.
 

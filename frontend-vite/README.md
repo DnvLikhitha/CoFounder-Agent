@@ -4,17 +4,7 @@ The Vite + React JavaScript workspace uses the durable v1 API and reads schemas 
 
 ## Run locally
 
-Use Node 22.13+ on the 22.x line or Node 24+. From the repository root in PowerShell:
-
-```powershell
-cd frontend-vite
-npm.cmd ci
-npm.cmd run dev:mock
-```
-
-Open the URL printed by Vite, usually `http://localhost:5173`. On macOS or Linux, use `npm` in the commands. The header identifies **Mock mode**. Its 16-step samples include overlapping agents, a review checkpoint, and either a complete result or a pricing timeout that blocks financial projections. Use **Approve** to resume over SSE, or **Request revision** to preview submitting feedback. History includes completed samples. Mock runs persist locally for this origin, so use sample problem statements.
-
-### Live mode
+Use Node 22.13+ on the 22.x line or Node 24+. Follow the [Windows setup](../README.md#run-locally-on-windows) to install dependencies and start PostgreSQL, the API, and the worker.
 
 Use an API configured to validate Supabase user JWTs and a provisioned Supabase account with email and password sign-in enabled. Use the same Supabase project as the API's `SUPABASE_URL` and confirm that it issues ES256 or RS256 user access tokens. The backend's development-only HS256 issuer cannot authenticate a Supabase session. See [the worker's production configuration](../backend/run_worker/README.md#production-configuration).
 
@@ -58,11 +48,9 @@ npm.cmd run test:browser
 npm.cmd run build
 ```
 
-`npm run build` writes the live app to `dist/`. Builds reject mock mode, and live mode without Supabase settings shows a sign-in unavailable page. The live build needs same-origin routing for `/api/v1` to the API, including unbuffered SSE, and an SPA fallback to `index.html` for browser routes such as `/sign-in`, `/history`, and `/run/:runId`.
+`npm run build` writes the live app to `dist/`. The app shows a sign-in unavailable page when Supabase settings are missing. The live build needs same-origin routing for `/api/v1` to the API, including unbuffered SSE, and an SPA fallback to `index.html` for browser routes such as `/sign-in`, `/history`, and `/run/:runId`.
 
-Browser tests exercise the live-mode app with intercepted Supabase and v1 responses. Set `PLAYWRIGHT_CHROMIUM_CHANNEL=msedge` or `chrome` to run against an installed browser.
-
-See the [React cutover readiness report](RELEASE_READINESS.md) for the tested candidate, rollback rehearsal, and staging gates.
+Browser tests exercise the API-backed app with intercepted Supabase and v1 responses. Set `PLAYWRIGHT_CHROMIUM_CHANNEL=msedge` or `chrome` to run against an installed browser.
 
 ## Integration
 
@@ -71,7 +59,7 @@ See the [React cutover readiness report](RELEASE_READINESS.md) for the tested ca
 - Live history follows the worker's owner-scoped v1 cursor. Enable `V1_REQUIRE_PRICING_REVIEW` to review draft pricing before investor outputs. The UI sends the selected artifact revision with each decision, supports editing one tier, and waits for the event carrying the replacement review. An HTTP 409 refreshes the snapshot. A separately enabled executive-summary review supports approval or rejection.
 - Run outputs link published source references, claims, and upstream artifact revisions. Revision history lets founders open older outputs and compare two versions side by side. After approval, the run labels downstream work that is regenerating and identifies the resulting revision from its input lineage.
 - Agent evaluations show the reported outcome, method, dimension explanations, and any evidence. Unevaluated outputs are labeled separately and do not display a score. Assumptions and uncertainty notes come from the artifact payload.
-- In live mode, each loaded artifact can be downloaded in its original media type. The UI also downloads server-generated Markdown, PDF, and PowerPoint for succeeded and partial runs. You can cancel an export while it is preparing and use the Save link to save the prepared file again.
+- Each loaded artifact can be downloaded in its original media type. The UI also downloads server-generated Markdown, PDF, and PowerPoint for succeeded and partial runs. You can cancel an export while it is preparing and use the Save link to save the prepared file again.
 - REST and fetch-based SSE use bearer headers. After a stream closes, the client obtains a fresh snapshot and opens the stream at its cursor using the current session. Forbidden, rate-limited, and unavailable responses produce distinct messages and preserve the session.
 
 ### Verify all 16 outputs on the live API

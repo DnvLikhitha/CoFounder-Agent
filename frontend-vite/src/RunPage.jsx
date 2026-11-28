@@ -5,7 +5,7 @@ import { FounderReview } from './FounderReview.jsx'
 import { Evaluations, OutputSection } from './OutputSection.jsx'
 import { watchRun } from './lib/watch-run.js'
 import { summarizeProgress } from './lib/run-progress.js'
-import { startDownload } from './lib/exports.js'
+import { retiredDemoVersions, startDownload } from './lib/exports.js'
 
 const initial = { snapshot: null, connection: 'loading', message: '' }
 
@@ -84,7 +84,8 @@ function RunPage({ runId, client }) {
             steps={progress.steps} status={snapshot.status} activeId={selection.id} claimPath={selection.claimPath}
             onSelect={(id) => setSelection({ id, claimPath: null })} onViewArtifact={viewArtifact}
             pricingReview={snapshot.pending_review?.revision_kind === 'pricing'} />
-          {exportable && <Exports client={client} runId={runId} partial={snapshot.status === 'partial'} />}
+          {exportable && <Exports client={client} runId={runId} partial={snapshot.status === 'partial'}
+            retired={retiredDemoVersions.has(snapshot.manifest.version)} />}
         </div>
         <AgentProgressTracker steps={progress.steps} runStatus={snapshot.status} artifacts={snapshot.artifacts}
           onViewArtifact={viewArtifact} />
@@ -133,7 +134,7 @@ function ConnectionNotice({ connection, message, refresh }) {
 
 const exportLabels = { markdown: 'Markdown', pdf: 'PDF', pptx: 'PowerPoint' }
 
-function Exports({ client, runId, partial }) {
+function Exports({ client, runId, partial, retired }) {
   const pending = useRef(null)
   const ready = useRef(null)
   const [file, setFile] = useState(null)
@@ -182,9 +183,11 @@ function Exports({ client, runId, partial }) {
   return (
     <section className="panel exports" aria-labelledby="exports-heading">
       <h2 id="exports-heading">Export plan</h2>
-      {partial && <p className="muted">Exports contain the available results from this partial run.</p>}
-      {client.supportsExports ? (
+      {retired ? (
+        <p className="muted">Reports are unavailable for retired demo runs. Open the saved artifacts instead.</p>
+      ) : (
         <>
+          {partial && <p className="muted">Exports contain the available results from this partial run.</p>}
           <div className="actions">
             {Object.entries(exportLabels).map(([format, label]) => (
               <button key={format} disabled={Boolean(state.format)} onClick={() => download(format)}>{label}</button>
@@ -193,9 +196,9 @@ function Exports({ client, runId, partial }) {
           </div>
           <p className="muted export-status" role="status">{state.message}</p>
           {file && <p><a href={file.url} download={file.filename}>Save {file.filename}</a></p>}
+          {state.error && <p className="notice error" role="alert">{state.error}</p>}
         </>
-      ) : <p className="muted">Downloads are available with the live API.</p>}
-      {state.error && <p className="notice error" role="alert">{state.error}</p>}
+      )}
     </section>
   )
 }

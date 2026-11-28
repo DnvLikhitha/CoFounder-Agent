@@ -3,12 +3,11 @@ import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, use
 import { HistoryPage } from './HistoryPage.jsx'
 import { InputForm } from './InputForm.jsx'
 import { authConfig } from './lib/auth-config.js'
-import { mockClient, mockMode } from './lib/index.js'
 import { createLiveClient } from './lib/live-client.js'
 import { authErrorMessage, createSessionAccess, expiredMessage } from './lib/session.js'
 
 const RunRoute = lazy(() => import('./RunPage.jsx'))
-const config = mockMode ? null : authConfig({
+const config = authConfig({
   VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
   VITE_SUPABASE_PUBLISHABLE_KEY: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
   VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
@@ -24,7 +23,7 @@ export default function App() {
         event.preventDefault()
         document.getElementById('main')?.focus()
       }}>Skip to content</a>
-      {mockMode ? <Workspace client={mockClient} /> : auth ? <LiveWorkspace /> : (
+      {auth ? <LiveWorkspace /> : (
         <>
           <SiteHeader />
           <main id="main" tabIndex={-1} className="page narrow">
@@ -46,7 +45,6 @@ function SiteHeader({ client, signOut, signingOut }) {
           <NavLink end to="/">New run</NavLink>
           <NavLink to="/history">History</NavLink>
         </nav>}
-        {mockMode && <span className="mode">Mock mode</span>}
         {signOut && <button type="button" disabled={signingOut} onClick={signOut}>Sign out</button>}
       </div>
     </header>

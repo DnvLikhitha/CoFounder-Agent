@@ -13,12 +13,10 @@ const decisionLabels = {
 export function FounderReview({ review, artifacts, client, runId, onStale, onViewArtifact }) {
   const pending = useRef(null)
   const submission = useRef(null)
-  const [state, setState] = useState(() => ({
-    status: client.getRevisionPreview?.(runId, review.review_id) ? 'revision-requested' : 'idle',
-  }))
+  const [state, setState] = useState({ status: 'idle' })
   const [revisionComment, setRevisionComment] = useState(null)
   const [pricingDraft, setPricingDraft] = useState(null)
-  const pricingReview = review.revision_kind === 'pricing' && client.supportsPricingRevision
+  const pricingReview = review.revision_kind === 'pricing'
   const pricingRef = pricingReview ? artifacts.find((item) => item.artifact_id === review.artifact_ids[0]) : null
   const pricing = useArtifact(client, runId, pricingRef)
   const tiers = Array.isArray(pricing.result?.artifact?.content?.tiers) ? pricing.result.artifact.content.tiers : []
@@ -64,13 +62,7 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
         expectedArtifactIds: review.artifact_ids,
       })
       if (request.signal.aborted) return
-      if (decision === 'revise' && !pricingReview) {
-        submission.current = null
-        setRevisionComment(null)
-        setState({ status: 'revision-requested' })
-      } else {
-        setState({ status: 'submitted', decision })
-      }
+      setState({ status: 'submitted', decision })
     } catch (error) {
       if (request.signal.aborted) return
       if (error.status === 409) {
@@ -90,10 +82,9 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
   }
 
   const revisions = review.artifact_ids.map((id) => ({ id, reference: artifacts.find((item) => item.artifact_id === id) }))
-  const canAct = (state.status === 'idle' || state.status === 'revision-requested') &&
+  const canAct = state.status === 'idle' &&
     revisions.every(({ reference }) => reference) && (!pricingReview || Boolean(pricing.result?.artifact))
-  const canRevise = pricingReview ? tiers.length > 0 : (
-    client.supportsRevisionPreview && revisions.some(({ reference }) => reference))
+  const canRevise = pricingReview && tiers.length > 0
   return (
     <section className="panel review" aria-labelledby="review-heading">
       <h2 id="review-heading">Review required</h2>
@@ -105,22 +96,19 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
           pricing={id === pricingRef?.artifact_id ? pricing : null} />
       ) : <p key={id} className="muted">Artifact revision <code>{id}</code> is unavailable.</p>)}
       {state.error && <p className="notice error" role="alert">{state.error}</p>}
-      {state.status === 'revision-requested' && (
-        <p role="status">Revision request recorded in the fixture. This checkpoint is still awaiting approval.</p>
-      )}
       {canAct && revisionComment === null && (
         <div className="actions">
           <button className="primary" onClick={() => submit('approve')}>Approve</button>
           <button onClick={() => submit('reject')}>Reject</button>
           {canRevise && <button onClick={() => {
-            if (pricingReview) chooseTier(tiers[0].tier_name)
+            chooseTier(tiers[0].tier_name)
             setRevisionComment('')
-          }}>{pricingReview ? 'Revise pricing' : 'Request revision'}</button>}
+          }}>Revise pricing</button>}
         </div>
       )}
       {canAct && revisionComment !== null && (
         <form className="revision-form" onSubmit={(event) => { event.preventDefault(); void submit('revise') }}>
-          {pricingReview && pricingDraft && (
+          {pricingDraft && (
             <>
               <label htmlFor="revision-tier">Pricing tier</label>
               <select id="revision-tier" className="input-surface" value={pricingDraft.tier_name}
@@ -135,12 +123,12 @@ export function FounderReview({ review, artifacts, client, runId, onStale, onVie
               ))}
             </>
           )}
-          <label htmlFor="revision-comment">{pricingReview ? 'Reason for the change (optional)' : 'What should change?'}</label>
-          <textarea id="revision-comment" className="input-surface" rows={3} maxLength={2000} required={!pricingReview}
+          <label htmlFor="revision-comment">Reason for the change (optional)</label>
+          <textarea id="revision-comment" className="input-surface" rows={3} maxLength={2000}
             value={revisionComment} onChange={(event) => setRevisionComment(event.target.value)} />
           <div className="actions">
-            <button className="primary" disabled={!pricingReview && !revisionComment.trim()}>
-              {pricingReview ? 'Save revision for approval' : 'Submit revision request'}
+            <button className="primary">
+              Save revision for approval
             </button>
             <button type="button" onClick={() => setRevisionComment(null)}>Cancel</button>
           </div>

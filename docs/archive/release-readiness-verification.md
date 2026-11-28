@@ -1,6 +1,6 @@
 # CoFounder-Agent release-readiness verification
 
-This document records an earlier candidate. See the [final local verification](final-project-verification.md) for the maintained application and current results.
+This document records an earlier candidate. See the [final local verification](../final-project-verification.md) for the maintained application and current results.
 
 **Verdict: NOT READY FOR DEPLOYMENT.** The Groq endpoint bug is fixed and a real browser run proved generation, artifacts, and pricing approval after a worker restart. The run finished partial. Financial Projections and Risk Analyst failed validation, downstream investor artifacts were blocked, and the browser PDF download and hosted Supabase release gates are still open.
 

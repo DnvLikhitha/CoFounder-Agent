@@ -74,7 +74,7 @@ def supabase_keys(issuer):
 def owner(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
     try:
         issuer = settings.supabase_issuer if settings.uses_supabase else settings.v1_jwt_issuer
-        if not settings.uses_supabase and len(settings.v1_jwt_secret) < 32:
+        if not settings.uses_supabase and not settings.uses_test_jwt:
             raise ValueError("Missing local authentication key")
     except ValueError:
         raise StoreError(503, "service_unavailable", "Authentication is not configured") from None

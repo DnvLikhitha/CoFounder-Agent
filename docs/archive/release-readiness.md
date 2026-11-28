@@ -1,8 +1,8 @@
 # CoFounder-Agent release readiness
 
-This document records an earlier candidate. See the [final local verification](final-project-verification.md) for the maintained application and current results.
+This document records an earlier candidate. See the [final local verification](../final-project-verification.md) for the maintained application and current results.
 
-These results and gates describe the pre-migration cutover candidate. The [current worker runbook](../backend/run_worker/README.md) covers the hardened API, Supabase Auth, metering, and automated checks. Production browser sign-in and the live ingress and provider exercises still require staging access.
+These results and gates describe the pre-migration cutover candidate. The [current worker runbook](../../backend/run_worker/README.md) covers the hardened API, Supabase Auth, metering, and automated checks. Production browser sign-in and the live ingress and provider exercises still require staging access.
 
 Candidate base: `baeeda7` on `origin/main` (PRs #5 and #6). The release-readiness branch adds a v1 stream expiry fix and regression test. The React live build is suitable for a fake-provider staging exercise. Keep the legacy application in service until the production gates below pass.
 

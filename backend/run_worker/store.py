@@ -66,10 +66,26 @@ class Store:
             # Serialize concurrent invocations of this additive migration.
             connection.execute("SELECT pg_advisory_xact_lock(71894021)")
             connection.execute(Path(__file__).with_name("schema.sql").read_text())
+            self._check_retired_runs(connection)
         from backend.run_worker.checkpoints import migrate_checkpoints
         migrate_checkpoints(self)
 
-    def submit(self, owner, key, body, *, version=None, token_limit=500_000, cost_limit=250_000_000,
+    @staticmethod
+    def _check_retired_runs(connection):
+        unfinished = connection.execute(
+            """SELECT 1 FROM v1_runs WHERE snapshot->'manifest'->>'version' = ANY(%s)
+               AND (snapshot->>'status') NOT IN ('succeeded', 'partial', 'failed') LIMIT 1""",
+            (list(workflow.RETIRED_DEMO_VERSIONS),),
+        ).fetchone()
+        if unfinished:
+            raise StoreError(409, "retired_runs_pending",
+                             "Finish pending four-agent demo runs with the previous worker before upgrading.")
+
+    def check_retired_runs(self):
+        with self.connect() as connection:
+            self._check_retired_runs(connection)
+
+    def submit(self, owner, key, body, *, version=workflow.REVIEWED_VERSION, token_limit=500_000, cost_limit=250_000_000,
                require_review=False, graph_mode=None, pricing_review=False, llm_evaluation=False):
         with self.connect() as connection:
             timestamp, run_id = now(connection), str(uuid4())
@@ -211,12 +227,13 @@ class Store:
                    AND snapshot->'manifest'->>'version' = ANY(%s)
                    AND (%s::text[] IS NULL OR prompt_version = ANY(%s::text[]))
                    AND (%s::text[] IS NULL OR model_profile = ANY(%s::text[]))
-                   AND (%s::text IS NULL OR graph_mode IS NULL OR graph_mode=%s)
+                   AND (%s::text IS NULL OR graph_mode=%s
+                        OR (%s::text = 'live' AND graph_mode IS NULL AND snapshot->'manifest'->>'version' = %s))
                    AND (graph_interrupt_id IS NULL OR graph_interrupt_id=graph_resume_id)
                    AND (lease_until IS NULL OR lease_until <= clock_timestamp())
                    ORDER BY created_at, run_id FOR UPDATE SKIP LOCKED LIMIT 1""",
                 (list(workflow.WORKFLOWS if versions is None else versions), prompts, prompts,
-                 profiles, profiles, graph_mode, graph_mode)).fetchone()
+                 profiles, profiles, graph_mode, graph_mode, graph_mode, workflow.LIVE_VERSION)).fetchone()
             if row is None:
                 return None
             token, snapshot = str(uuid4()), row["snapshot"]
@@ -346,9 +363,7 @@ class Store:
                 outcome["attempt"] = step["attempt"]
             return outcome
 
-    def is_demo(self, owner, run_id, version):
-        if version not in workflow.GRAPH_VERSIONS:
-            return version in workflow.FAKE_VERSIONS
+    def is_demo(self, owner, run_id):
         with self.connect() as connection:
             row = connection.execute("SELECT graph_mode FROM v1_runs WHERE run_id=%s AND owner_id=%s",
                                      (run_id, owner)).fetchone()

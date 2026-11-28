@@ -18,7 +18,8 @@ from backend.context import AgentInputs
 from backend.llm.profiles import STARTUP_PROMPTS_V1
 from backend.run_worker import live_agents
 from backend.run_worker.provider_call import ClaimCalls, call_with_deadline
-from backend.run_worker.workflow import LIVE_STEPS, LIVE_VERSION, InvalidOutput, check_graph, fake_provider, validate_output
+from backend.run_worker.workflow import LIVE_STEPS, LIVE_VERSION, InvalidOutput, check_graph, validate_output
+from backend.tests.business_fixture import business_response
 
 
 FIXTURE = Path(__file__).parents[1] / "run_worker" / "demo_outputs.json"
@@ -72,7 +73,7 @@ def invalid_provider(step_id, body, upstream):
 def hang_during_pricing(step_id, body, upstream):
     if step_id == "pricing_strategy":
         Event().wait()
-    return fake_provider(step_id, body, upstream)
+    return business_response(step_id, body, upstream)
 
 
 def wait_in_sibling_steps(marker_dir, step_id, body, upstream):
@@ -80,7 +81,7 @@ def wait_in_sibling_steps(marker_dir, step_id, body, upstream):
         (Path(marker_dir) / f"{getpid()}.started").touch()
         while not (Path(marker_dir) / "release").exists():
             sleep(0.05)
-    return fake_provider(step_id, body, upstream)
+    return business_response(step_id, body, upstream)
 
 
 class LiveAgentTests(unittest.TestCase):

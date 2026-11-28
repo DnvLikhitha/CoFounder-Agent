@@ -6,7 +6,7 @@ import { chromium } from 'playwright'
 import { createServer } from 'vite'
 import revisedArtifacts from '../../shared/contracts/fixtures/revised/artifacts.json' with { type: 'json' }
 import revisedStart from '../../shared/contracts/fixtures/revised/snapshot.json' with { type: 'json' }
-import { fullAgentFixtures } from '../src/fixtures/full-agent-runs.js'
+import { fullAgentFixtures } from '../test/fixtures/full-agent-runs.js'
 import { applyFrame, toFrame } from '../src/lib/run-state.js'
 
 const idp = 'https://browser-test.supabase.co'
@@ -413,6 +413,48 @@ test('forbidden, rate-limited and unavailable requests retain the session, revok
   assert.equal(state.refreshed, 1)
   assert.equal(await page.getByRole('heading', { name: 'Run history' }).count(), 0)
 })
+
+for (const [version, scenario] of [['fake-business-v1', 'full-succeeded'], ['fake-business-v2', 'full-partial']]) {
+  test(`${version} keeps saved artifacts available and hides retired report downloads`, { timeout: 45000 }, async (t) => {
+    const archived = fullAgentFixtures[scenario]
+    const stepIds = new Set(['business_model', 'pricing_strategy', 'financial_projections', 'risk_register'])
+    const snapshot = {
+      ...archived.final,
+      manifest: {
+        version,
+        steps: archived.final.manifest.steps.filter(({ step_id }) => stepIds.has(step_id))
+          .map((step) => ({ ...step, depends_on: step.depends_on.filter((id) => stepIds.has(id)) })),
+      },
+      steps: archived.final.steps.filter(({ step_id }) => stepIds.has(step_id)),
+      artifacts: archived.final.artifacts.filter(({ step_id }) => stepIds.has(step_id)),
+      evaluations: [],
+    }
+    const path = `/api/v1/runs/${snapshot.run_id}`
+    const { page, state } = await setup(t, (route) => {
+      const { pathname } = new URL(route.request().url())
+      if (pathname === path) return route.fulfill({ json: snapshot })
+      const artifact = archived.artifacts.find(({ reference }) => pathname === reference.href)
+      if (artifact) return route.fulfill({ json: artifact })
+      return route.fulfill({ status: 404 })
+    })
+    await page.goto(`${origin}/run/${snapshot.run_id}`)
+    await signIn(page)
+
+    const exports = page.getByRole('region', { name: 'Export plan' })
+    await exports.getByText('Reports are unavailable for retired demo runs. Open the saved artifacts instead.').waitFor()
+    assert.equal(await exports.getByRole('button').count(), 0)
+
+    const outputs = page.getByRole('region', { name: 'Run outputs' })
+    await outputs.getByLabel('Browse outputs').selectOption('business_model')
+    const [file] = await Promise.all([
+      page.waitForEvent('download'),
+      outputs.getByRole('button', { name: 'Download artifact' }).click(),
+    ])
+    const artifact = archived.artifacts.find(({ reference }) => reference.artifact_id === 'business_model')
+    assert.deepEqual(JSON.parse(await savedFile(file, 'business_model.json')), artifact.content)
+    assert.ok(!state.calls.some(({ pathname }) => pathname.startsWith(path + '/exports/')))
+  })
+}
 
 test('The previous PDF stays available during preparation, cancellation and failure', { timeout: 45000 }, async (t) => {
   const pdf = Buffer.concat([Buffer.from('%PDF-1.7\n%'), Buffer.from([0xe2, 0xe3, 0xcf, 0xd3])])

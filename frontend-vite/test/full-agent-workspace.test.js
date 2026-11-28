@@ -3,9 +3,8 @@ import { after, before, test } from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
-import { fullAgentFixtures } from '../src/fixtures/full-agent-runs.js'
+import { fullAgentFixtures } from './fixtures/full-agent-runs.js'
 import { createLiveClient } from '../src/lib/live-client.js'
-import { createMockClient } from '../src/lib/mock-client.js'
 import { summarizeProgress } from '../src/lib/run-progress.js'
 import { applyFrame, checkArtifact, checkSnapshot, ProtocolError, toFrame } from '../src/lib/run-state.js'
 import { createSubmissionKeys } from '../src/lib/submission.js'
@@ -178,23 +177,18 @@ test('a submission retry keeps its key and a new run gets a new key', async () =
   assert.notEqual(keys.get(input), first)
   const second = keys.get(input)
   assert.notEqual(keys.get({ ...input, geography: 'India' }), second)
-  const records = new Map()
-  const mock = createMockClient({
-    fixtures: fullAgentFixtures,
-    storage: { getItem: (key) => records.get(key), setItem: (key, value) => records.set(key, value) },
-  })
-  const options = { scenario: 'full-succeeded', idempotencyKey: first }
-  const [accepted, retried] = await Promise.all([mock.startRun(input, options), mock.startRun(input, options)])
-  assert.deepEqual(accepted, retried)
-  await assert.rejects(mock.startRun({ ...input, geography: 'India' }, options), { status: 409 })
-  assert.notEqual((await mock.startRun(input, { ...options, idempotencyKey: second })).run_id, accepted.run_id)
+  const accepted = success.snapshot
+  const sent = []
   const client = createLiveClient(async (url, opts) => {
     assert.equal(url, '/api/v1/runs')
-    assert.equal(opts.headers['Idempotency-Key'], first)
+    sent.push(opts.headers['Idempotency-Key'])
     assert.deepEqual(JSON.parse(opts.body), input)
     return Response.json(accepted, { status: 202 })
   })
   assert.deepEqual(await client.startRun(input, { idempotencyKey: first }), accepted)
+  await client.startRun(input, { idempotencyKey: first })
+  await client.startRun(input, { idempotencyKey: second })
+  assert.deepEqual(sent, [first, first, second])
 })
 
 test('exports preserve bytes and safe names, and report HTTP or payload failures', async () => {

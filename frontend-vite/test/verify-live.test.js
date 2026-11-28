@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { fullAgentFixtures } from '../src/fixtures/full-agent-runs.js'
+import { fullAgentFixtures } from './fixtures/full-agent-runs.js'
 
 const fixture = fullAgentFixtures['full-succeeded']
 const verifier = fileURLToPath(new URL('../browser/verify-live.js', import.meta.url))
-const fixtures = new URL('../src/fixtures/full-agent-runs.js', import.meta.url).href
+const fixtures = new URL('./fixtures/full-agent-runs.js', import.meta.url).href
 const mockTransport = `
   const { fullAgentFixtures } = await import(${JSON.stringify(fixtures)})
   const { final, artifacts } = fullAgentFixtures['full-succeeded']
