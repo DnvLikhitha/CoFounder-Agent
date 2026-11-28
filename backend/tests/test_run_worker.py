@@ -1374,14 +1374,20 @@ class WorkerIntegrationTests(unittest.TestCase):
                 self.assertIn("Business model: subscription", slide_text)
 
     def test_exports_and_legacy_routes_disabled(self):
+        from reportlab import rl_config
+
         run_id = self.submit()["run_id"]
         self.assertEqual(self.client.get(f"/runs/{run_id}/exports/pdf", headers=self.headers()).status_code, 409)
         execute_claim(self.database, self.database.claim())
         for format, prefix in [("markdown", b"#"), ("pdf", b"%PDF"), ("pptx", b"PK")]:
-            response = self.client.get(f"/runs/{run_id}/exports/{format}", headers=self.headers())
+            with patch.object(rl_config, "pageCompression", 0):
+                response = self.client.get(f"/runs/{run_id}/exports/{format}", headers=self.headers())
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.content.startswith(prefix))
             self.assertIn("attachment", response.headers["content-disposition"])
+            if format == "pdf":
+                self.assertIn(b"Slide 1: Workflow results", response.content)
+                self.assertIn(b"Business model: subscription.", response.content)
         from backend.main import app as main_app
         client = TestClient(main_app)
         legacy = [("POST", "/api/run"), ("GET", "/api/runs"), ("GET", f"/api/run/{run_id}"),
@@ -1524,7 +1530,8 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertIn(b"Campus Pilot", pdf.content)
         for expected in (b"Customer Personas", b"Product Design", b"MVP Roadmap", b"Business Model",
                          b"Technical Architecture", b"CREATE TABLE verified_roles", b"Security and Compliance",
-                         b"A Verified Internship Gap"):
+                         b"A Verified Internship Gap", b"Verify hours before applying.",
+                         b"Speaker notes: Describe the schedule verification workflow."):
             self.assertIn(expected, pdf.content)
         pptx = self.client.get(f"{exports}/pptx", headers=self.headers())
         self.assertEqual(pptx.status_code, 200)

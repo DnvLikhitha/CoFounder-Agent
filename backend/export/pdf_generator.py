@@ -48,6 +48,7 @@ def create_styles():
         fontSize=10, fontName="Helvetica",
         textColor=LIGHT_TEXT, spaceAfter=5, leading=16
     ))
+    styles.add(ParagraphStyle("ArtifactText", parent=styles["BodyText2"], textColor=DARK_BG))
     styles.add(ParagraphStyle(
         name="BulletItem",
         fontSize=10, fontName="Helvetica",
@@ -73,8 +74,30 @@ def add_section(story, styles, title, entries):
     story.append(Paragraph(title, styles["SectionHeader"]))
     story.append(HRFlowable(width="100%", thickness=0.5, color=ACCENT, spaceAfter=10))
     for entry in entries:
-        story.append(Paragraph(escape(entry), styles["BodyText2"]))
+        story.append(Paragraph(escape(entry), styles["ArtifactText"]))
     story.append(Spacer(1, 0.15 * inch))
+
+
+def add_pitch_deck(story, styles, slides):
+    if not slides:
+        return
+    story.append(Paragraph("Pitch Deck", styles["SectionHeader"]))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=ACCENT, spaceAfter=10))
+    text_style = styles["ArtifactText"]
+    heading_style = ParagraphStyle("PitchSlide", parent=text_style, fontName="Helvetica-Bold", keepWithNext=True)
+    bullet_style = ParagraphStyle("PitchBullet", parent=styles["BulletItem"], textColor=DARK_BG)
+    for position, slide in enumerate(slides, start=1):
+        heading = f"Slide {slide.get('slide_number') or position}"
+        if title := slide.get("title"):
+            heading += f": {title}"
+        story.append(Paragraph(escape(heading), heading_style))
+        if headline := slide.get("headline"):
+            story.append(Paragraph(escape(headline), text_style))
+        for bullet in slide.get("bullet_points") or []:
+            story.append(Paragraph(escape(bullet), bullet_style, bulletText="•"))
+        if notes := slide.get("speaker_notes"):
+            story.append(Paragraph(escape(f"Speaker notes: {notes}"), text_style))
+        story.append(Spacer(1, 0.1 * inch))
 
 
 async def generate_pdf(ctx: RunContext, *, notice="") -> bytes:
@@ -347,13 +370,11 @@ async def generate_pdf(ctx: RunContext, *, notice="") -> bytes:
         add_section(story, styles, "Database Schema", [
             f"{item['entity']} — {item['purpose']}" for item in schema["entities"]
         ])
-        sql_style = ParagraphStyle("SchemaSQL", parent=styles["BodyText2"], fontName="Courier", fontSize=8)
+        sql_style = ParagraphStyle("SchemaSQL", parent=styles["BodyText2"], fontName="Courier",
+                                   fontSize=9, leading=12, textColor=DARK_BG)
         story.append(Preformatted(schema["sql_schema"], sql_style, maxLineLength=90))
     add_section(story, styles, "Security and Compliance", ctx.security_compliance.get("security_launch_checklist", []))
-    add_section(story, styles, "Pitch Deck", [
-        f"Slide {item['slide_number']}: {item['title']} — {item['headline']}"
-        for item in ctx.pitch_deck.get("slides", []) if "slide_number" in item
-    ])
+    add_pitch_deck(story, styles, ctx.pitch_deck.get("slides", []))
 
     # ── Footer note ──────────────────────────────────────────────────────
     story.append(HRFlowable(width="100%", thickness=0.5, color=MUTED, spaceBefore=20, spaceAfter=10))
