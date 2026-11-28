@@ -16,12 +16,14 @@ const partial = fullAgentFixtures['full-partial']
 const fixtureStatus = (fixture, cursor) => fixture.events.slice(0, cursor).map(toFrame).reduce(applyFrame, fixture.snapshot)
 const output = (kind) => success.artifacts.find((item) => item.reference.kind === kind)
 const markup = (component, props) => renderToStaticMarkup(createElement(component, props))
-let vite, ArtifactContent, OutputSection, ProgressOverview, AgentProgressTracker
+let vite, ArtifactContent, OutputSection, Evaluations, ProgressOverview, AgentProgressTracker
 
 before(async () => {
   vite = await createServer({ appType: 'custom', server: { middlewareMode: true, ws: false } })
   ArtifactContent = (await vite.ssrLoadModule('/src/ArtifactContent.jsx')).ArtifactContent
-  OutputSection = (await vite.ssrLoadModule('/src/OutputSection.jsx')).OutputSection
+  const outputs = await vite.ssrLoadModule('/src/OutputSection.jsx')
+  OutputSection = outputs.OutputSection
+  Evaluations = outputs.Evaluations
   const tracker = await vite.ssrLoadModule('/src/AgentProgressTracker.jsx')
   ProgressOverview = tracker.ProgressOverview
   AgentProgressTracker = tracker.AgentProgressTracker
@@ -57,6 +59,19 @@ test('all sixteen artifacts validate and render their actual agent output fields
   assert.match(market, /Serviceable available market \(SAM\)/)
   assert.match(market, /Serviceable obtainable market \(SOM\)/)
   assert.doesNotMatch(market, /Compound annual growth rate/)
+})
+
+test('evaluation overview displays every step, run-wide, and unassigned result once', () => {
+  const steps = success.final.manifest.steps.slice(0, 2)
+  const [first] = success.final.evaluations
+  const evaluations = [
+    { ...first, step_id: steps[0].step_id, reasons: ['Step result'] },
+    { ...first, evaluation_id: 'run-evaluation', step_id: null, artifact_id: null, reasons: ['Run-wide result'] },
+    { ...first, evaluation_id: 'unassigned-evaluation', step_id: 'retired-step', reasons: ['Unassigned result'] },
+  ]
+  const html = markup(Evaluations, { evaluations, steps, artifacts: success.final.artifacts })
+  assert.match(html, /Step result[\s\S]*Run-wide and unassigned evaluations[\s\S]*Run-level evaluation[\s\S]*Run-wide result[\s\S]*Unassigned result/)
+  for (const { reasons: [reason] } of evaluations) assert.equal(html.split(reason).length - 1, 1)
 })
 
 test('finance and deck components show supplied values and handle missing fields or slides', () => {

@@ -264,14 +264,24 @@ export function Assumptions({ entries }) {
 
 export function Evaluations({ evaluations, artifacts, steps, onViewArtifact }) {
   const references = new Map(artifacts.map((artifact) => [artifact.artifact_id, artifact]))
+  const byStep = new Map(steps.map(({ step_id }) => [step_id, []]))
+  const unassigned = []
+  for (const evaluation of evaluations) {
+    const group = byStep.get(evaluation.step_id) ?? unassigned
+    group.push(evaluation)
+  }
   return (
     <section className="panel evaluations">
-      <h2>Agent evaluations</h2>
+      <h2>Evaluations</h2>
       {steps.map((step) => <section key={step.step_id} className="agent-evaluation">
         <h3>{step.label}</h3>
-        <EvaluationList evaluations={evaluations.filter((item) => item.step_id === step.step_id)}
+        <EvaluationList evaluations={byStep.get(step.step_id)}
           references={references} onSelect={onViewArtifact} showTarget />
       </section>)}
+      {unassigned.length > 0 && <section className="agent-evaluation">
+        <h3>Run-wide and unassigned evaluations</h3>
+        <EvaluationList evaluations={unassigned} references={references} onSelect={onViewArtifact} showTarget />
+      </section>}
     </section>
   )
 }
@@ -306,7 +316,7 @@ function EvaluationList({ evaluations, references, onSelect, showTarget }) {
           <p><strong>{outcomes[evaluation.outcome]}</strong> <span className="muted">· Version {evaluation.evaluator_version}</span></p>
           {showTarget && <p>{evaluation.artifact_id
             ? <ArtifactJump artifactId={evaluation.artifact_id} references={references} onSelect={onSelect} />
-            : <span className="muted">Agent-level evaluation</span>}</p>}
+            : <span className="muted">{evaluation.step_id == null ? 'Run-level evaluation' : 'Agent-level evaluation'}</span>}</p>}
           {evaluation.dimensions?.length ? <dl className="reasons">{evaluation.dimensions.map((item) => (
             <div key={item.dimension}>
               <dt>{dimensions[item.dimension]} · {outcomes[item.outcome]}</dt>
