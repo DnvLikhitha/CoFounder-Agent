@@ -142,10 +142,12 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(first["artifact_ids"], ["pricing_strategy"])
         old_price = self.database.artifact("alice", run_id, "pricing_strategy")
         old_forecast = self.database.artifact("alice", run_id, "financial_projections")
-        tier = old_price["content"]["tiers"][0]["tier_name"]
+        tier = old_price["content"]["tiers"][0]
+        monthly_price = tier["price_monthly_usd"]
         path = f'/runs/{run_id}/reviews/{first["review_id"]}/decisions'
         revision = {"decision_id": str(uuid4()), "decision": "revise", "artifact_ids": first["artifact_ids"],
-                    "pricing_revision": {"tier_name": tier, "price_monthly_usd": 37, "price_annual_usd": 370}}
+                    "pricing_revision": {"tier_name": tier["tier_name"], "price_monthly_usd": monthly_price,
+                                         "price_annual_usd": 900}}
         self.assertEqual(self.client.post(path, headers=self.headers("bob"), json=revision).status_code, 404)
         stale = {**revision, "artifact_ids": ["pricing_strategy-r2"]}
         self.assertEqual(self.client.post(path, headers=self.headers(), json=stale).status_code, 409)
@@ -166,7 +168,8 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(self.client.post(path, headers=self.headers(), json=stale_decision).status_code, 409)
         updated = self.client.get(f"/runs/{run_id}/artifacts/pricing_strategy-r2", headers=self.headers()).json()
         self.assertEqual(updated["reference"]["supersedes_artifact_id"], "pricing_strategy")
-        self.assertEqual(updated["content"]["tiers"][0]["price_monthly_usd"], 37)
+        self.assertEqual(updated["content"]["tiers"][0]["price_monthly_usd"], monthly_price)
+        self.assertEqual(updated["content"]["tiers"][0]["price_annual_usd"], 900)
         self.assertEqual(restarted.artifact("alice", run_id, "pricing_strategy"), old_price)
         path = f'/runs/{run_id}/reviews/{current["review_id"]}/decisions'
         approval = {**stale_decision, "decision_id": str(uuid4()), "artifact_ids": current["artifact_ids"]}
@@ -183,7 +186,11 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(states["financial_projections"], 2)
         self.assertTrue(all(count == 1 for step, count in states.items() if step != "financial_projections"))
         forecast = restarted.artifact("alice", run_id, "financial_projections-r2")
-        self.assertEqual(forecast["content"]["assumptions"]["reviewed_monthly_price_usd"], 37)
+        self.assertEqual(forecast["content"]["assumptions"]["reviewed_monthly_price_usd"], monthly_price)
+        final_month = forecast["content"]["monthly_projections"][-1]
+        self.assertEqual(final_month["tier_customers"][tier["tier_name"]], {"monthly": 6, "annual": 6})
+        self.assertEqual(final_month["mrr_usd"], 6 * monthly_price + 6 * 900 / 12)
+        self.assertNotEqual(forecast["content"]["arr_month_12_usd"], old_forecast["content"]["arr_month_12_usd"])
         self.assertIn("pricing_strategy-r2", forecast["reference"]["input_artifact_ids"])
         self.assertEqual(restarted.artifact("alice", run_id, "financial_projections"), old_forecast)
         deck = restarted.artifact("alice", run_id, "pitch_deck")

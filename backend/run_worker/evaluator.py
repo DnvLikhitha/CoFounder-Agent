@@ -216,6 +216,13 @@ class JudgeScores(BaseModel):
 
 
 def judge_prompt(step_id, body, upstream, *, limit=18_000):
+    from backend.run_worker.workflow import LIVE_STEPS
+
+    required = [name for name in LIVE_STEPS[step_id].required if name in upstream]
+    if "financial_projections" in required:
+        required.remove("financial_projections")
+        required.insert(0, "financial_projections")
+    optional = sorted(upstream.keys() - set(required))
     payload = {"step": step_id, "founder": body["input"], "artifact": body["content"],
                "upstream": {}, "omitted_upstream": sorted(upstream)}
 
@@ -225,7 +232,9 @@ def judge_prompt(step_id, body, upstream, *, limit=18_000):
     prompt = encode()
     if len(prompt) > limit:
         return None, payload["omitted_upstream"]
-    for name in sorted(upstream):
+    for name in (*required, *optional):
+        if name not in required and any(dep in payload["omitted_upstream"] for dep in required):
+            break
         payload["upstream"][name] = upstream[name]
         payload["omitted_upstream"].remove(name)
         candidate = encode()
@@ -264,12 +273,15 @@ def judge_provider(step_id, body, upstream, *, database, claim, profile, timeout
             raise InvalidOutput(step_id) from None
         dimensions = []
         for name, value in scores.items():
-            if omitted and name in {"consistency", "grounding"}:
+            if omitted and value != 0 and name in {"consistency", "grounding"}:
                 dimensions.append(dict(dimension=name, outcome="needs_review",
                                        reason="Some upstream context exceeded the optional judge input limit."))
             else:
                 dimensions.append(dict(dimension=name, outcome=("failed", "needs_review", "passed")[value],
                                        reason="Model judgment based on supplied inputs."))
-        return result(dimensions, "llm")
+        evaluation = result(dimensions, "llm")
+        if omitted:
+            evaluation["reasons"].append("Some upstream context was omitted from the optional judge input.")
+        return evaluation
 
     return asyncio.run(evaluate())

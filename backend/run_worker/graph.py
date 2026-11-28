@@ -1,5 +1,6 @@
 """The versioned 16-agent StateGraph and its durable worker adapter."""
 from contextlib import contextmanager
+from decimal import Decimal
 from functools import partial
 import json
 from pathlib import Path
@@ -160,20 +161,30 @@ def demo_provider(step_id, body, upstream):
         sample["tool_evidence"] = {"serpapi_sources": ["https://example.org/demo-research"]}
     revised = upstream.get(PRICING, {}).get("founder_price_revision")
     if step_id == FINANCIALS and revised:
-        amount = revised["price_monthly_usd"]
+        tier = revised["tier_name"]
+        prices = approved_prices(upstream[PRICING])
+        monthly_price = Decimal(str(prices[tier]["price_monthly_usd"]))
+        annual_price = Decimal(str(prices[tier]["price_annual_usd"]))
+        annual_run_rate = Decimal(0)
+        total_revenue = Decimal(0)
         for row in sample["monthly_projections"]:
-            projected = amount * row["total_customers"]
+            annual = (row["total_customers"] + 1) // 2
+            monthly = row["total_customers"] - annual
+            annual_run_rate = monthly * monthly_price * 12 + annual * annual_price
+            revenue = round(annual_run_rate / 12, 2)
+            total_revenue += revenue
+            projected = float(revenue)
             row["net_profit_usd"] += projected - row["mrr_usd"]
             row.update(mrr_usd=projected, revenue_usd=projected,
-                       tier_customers={revised["tier_name"]: {"monthly": row["total_customers"], "annual": 0}})
-        sample.update(pricing_assumptions=approved_prices(upstream[PRICING]),
-                      arr_month_12_usd=sample["monthly_projections"][-1]["mrr_usd"] * 12,
-                      total_12mo_revenue_usd=sum(row["revenue_usd"] for row in sample["monthly_projections"]),
+                       tier_customers={tier: {"monthly": monthly, "annual": annual}})
+        sample.update(pricing_assumptions=prices,
+                      arr_month_12_usd=float(annual_run_rate),
+                      total_12mo_revenue_usd=float(total_revenue),
                       breakeven_month=next((row["month"] for row in sample["monthly_projections"]
                                             if row["net_profit_usd"] >= 0), 0),
                       ltv_usd=None, ltv_cac_ratio=None,
-                      key_assumptions_note="Synthetic forecast applies the revised monthly price to all paid customers.")
-        sample["assumptions"]["reviewed_monthly_price_usd"] = amount
+                      key_assumptions_note="Synthetic customers are allocated across monthly and annual plans.")
+        sample["assumptions"]["reviewed_monthly_price_usd"] = prices[tier]["price_monthly_usd"]
     if step_id == "executive_summary" and revised:
         forecast = upstream[FINANCIALS]
         sample["key_metrics_snapshot"] = {

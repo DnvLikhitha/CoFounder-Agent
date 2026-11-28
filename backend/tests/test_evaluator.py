@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from backend.run_worker.evaluator import DIMENSIONS, domain_errors, evidence_links, heuristic, judge_provider
+from backend.run_worker.evaluator import DIMENSIONS, domain_errors, evidence_links, heuristic, judge_prompt, judge_provider
 from backend.run_worker.workflow import LIVE_STEPS, REVIEWED_VERSION, InvalidOutput, validate_output
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evaluation_cases.json"
@@ -14,7 +14,7 @@ class DeterministicEvaluationTests(unittest.TestCase):
     def test_judge_preserves_artifact_and_marks_context_dependent_checks_when_inputs_are_omitted(self):
         content = {"slides": [{"speaker_notes": 'Detailed "notes" ' * 480}, {"title": "Final slide"}]}
         upstream = {"financial_projections": {"note": "x" * 18_000}, "pricing_strategy": {"tier": "Starter"}}
-        scores = {name: 0 if name in {"consistency", "grounding"} else 2 for name in DIMENSIONS}
+        scores = {name: 0 if name == "consistency" else 2 for name in DIMENSIONS}
         with patch("backend.llm.client.LLMClient") as client:
             call = client.return_value.complete = AsyncMock(return_value=json.dumps(scores))
             evaluation = judge_provider("pitch_deck", {"input": {}, "content": content}, upstream,
@@ -25,9 +25,28 @@ class DeterministicEvaluationTests(unittest.TestCase):
         self.assertEqual(payload["artifact"], content)
         self.assertEqual(payload["upstream"], {"pricing_strategy": upstream["pricing_strategy"]})
         self.assertEqual(payload["omitted_upstream"], ["financial_projections"])
-        self.assertEqual(evaluation["outcome"], "needs_review")
-        self.assertEqual({item["dimension"] for item in evaluation["dimensions"] if item["outcome"] == "needs_review"},
-                         {"consistency", "grounding"})
+        self.assertEqual(evaluation["outcome"], "failed")
+        dimensions = {item["dimension"]: item["outcome"] for item in evaluation["dimensions"]}
+        self.assertEqual(dimensions["consistency"], "failed")
+        self.assertEqual(dimensions["grounding"], "needs_review")
+        self.assertIn("Some upstream context was omitted from the optional judge input.", evaluation["reasons"])
+
+    def test_investor_judge_packs_required_forecast_before_optional_context(self):
+        body = {"input": {}, "content": {"slides": []}}
+        cases = {"pitch_deck": "competitor_analysis", "executive_summary": "risk_register"}
+        for step, optional in cases.items():
+            with self.subTest(step=step):
+                upstream = {optional: {"notes": "x" * 200}, "financial_projections": {"notes": "y" * 200}}
+                prompt, omitted = judge_prompt(step, body, upstream, limit=400)
+                self.assertEqual(list(json.loads(prompt)["upstream"]), ["financial_projections"])
+                self.assertEqual(omitted, [optional])
+
+                upstream["financial_projections"]["notes"] = "y" * 500
+                optional_prompt, _ = judge_prompt(step, body, {optional: upstream[optional]}, limit=400)
+                self.assertIn(optional, json.loads(optional_prompt)["upstream"])
+                prompt, omitted = judge_prompt(step, body, upstream, limit=400)
+                self.assertEqual(json.loads(prompt)["upstream"], {})
+                self.assertCountEqual(omitted, ["financial_projections", optional])
 
     def test_oversized_artifact_skips_the_optional_judge_before_dispatch(self):
         with patch("backend.llm.client.LLMClient") as client:
@@ -46,10 +65,14 @@ class DeterministicEvaluationTests(unittest.TestCase):
         upstream = {"pricing_strategy": pricing}
         forecast = demo_provider("financial_projections", {}, upstream)
         row = forecast["monthly_projections"][0]
-        row["tier_customers"][tier["tier_name"]] = {"monthly": 0, "annual": 1}
-        row.update(mrr_usd=30.83, revenue_usd=30.83)
-        forecast["total_12mo_revenue_usd"] = 2879.83
         self.assertEqual(domain_errors("financial_projections", forecast, upstream), [])
+        self.assertEqual(row["tier_customers"][tier["tier_name"]], {"monthly": 0, "annual": 1})
+        self.assertEqual(row["mrr_usd"], 30.83)
+        tier["price_annual_usd"] = 250
+        annual_edit = demo_provider("financial_projections", {}, upstream)
+        self.assertEqual(domain_errors("financial_projections", annual_edit, upstream), [])
+        self.assertEqual(annual_edit["arr_month_12_usd"], forecast["arr_month_12_usd"] - 6 * 120)
+        tier["price_annual_usd"] = 370
         row.update(mrr_usd=125, revenue_usd=125)
         self.assertIn("approved prices", domain_errors("financial_projections", forecast, upstream)[0])
 
