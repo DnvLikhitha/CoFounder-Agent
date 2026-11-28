@@ -136,6 +136,7 @@ const exportLabels = { markdown: 'Markdown', pdf: 'PDF', pptx: 'PowerPoint' }
 function Exports({ client, runId, partial }) {
   const pending = useRef(null)
   const ready = useRef(null)
+  const [file, setFile] = useState(null)
   const [state, setState] = useState({})
 
   useEffect(() => () => {
@@ -162,12 +163,12 @@ function Exports({ client, runId, partial }) {
       const url = URL.createObjectURL(blob)
       if (ready.current) URL.revokeObjectURL(ready.current)
       ready.current = url
-      const file = { url, filename }
-      setState({ file, message: `${label} is ready.` })
+      setFile({ url, filename })
+      setState({ message: `${label} is ready.` })
       try {
         startDownload(url, filename)
       } catch {
-        setState({ file, error: 'The download did not start automatically. Use the Save link.' })
+        setState({ error: 'The download did not start automatically. Use the Save link.' })
       }
     } catch (error) {
       if (!request.signal.aborted) {
@@ -191,7 +192,7 @@ function Exports({ client, runId, partial }) {
             {state.format && <button type="button" onClick={cancel}>Cancel export</button>}
           </div>
           <p className="muted export-status" role="status">{state.message}</p>
-          {state.file && <p><a href={state.file.url} download={state.file.filename}>Save {state.file.filename}</a></p>}
+          {file && <p><a href={file.url} download={file.filename}>Save {file.filename}</a></p>}
         </>
       ) : <p className="muted">Downloads are available with the live API.</p>}
       {state.error && <p className="notice error" role="alert">{state.error}</p>}

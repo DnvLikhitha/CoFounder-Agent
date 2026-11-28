@@ -14,7 +14,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
   if (mode !== 'mock') authConfig(loadEnv(mode, root, 'VITE_SUPABASE_'))
   const { API_PROXY_TARGET, DEV_HTTPS_CERT, DEV_HTTPS_KEY } = loadEnv(mode, root, ['API_PROXY_TARGET', 'DEV_HTTPS_'])
   let https
-  if (command === 'serve' && mode !== 'mock' && !isPreview && (DEV_HTTPS_CERT || DEV_HTTPS_KEY)) {
+  if (command === 'serve' && mode === 'live' && !isPreview && (DEV_HTTPS_CERT || DEV_HTTPS_KEY)) {
     if (!DEV_HTTPS_CERT || !DEV_HTTPS_KEY) throw new Error('Set both DEV_HTTPS_CERT and DEV_HTTPS_KEY to enable local HTTPS.')
     https = { cert: readFileSync(DEV_HTTPS_CERT), key: readFileSync(DEV_HTTPS_KEY) }
   }

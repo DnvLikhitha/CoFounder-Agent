@@ -27,7 +27,7 @@ before(async () => {
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_browser-test'
   delete process.env.VITE_SUPABASE_ANON_KEY
   const root = fileURLToPath(new URL('..', import.meta.url))
-  server = await createServer({ root, mode: 'live', server: { host: '127.0.0.1', port: 0 } })
+  server = await createServer({ root, mode: 'test', server: { host: '127.0.0.1', port: 0 } })
   await server.listen()
   origin = `http://127.0.0.1:${server.httpServer.address().port}`
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHROMIUM_CHANNEL })
@@ -414,7 +414,7 @@ test('forbidden, rate-limited and unavailable requests retain the session, revok
   assert.equal(await page.getByRole('heading', { name: 'Run history' }).count(), 0)
 })
 
-test('PDF export can be canceled, retried and saved from its retained link', { timeout: 45000 }, async (t) => {
+test('The previous PDF stays available during preparation, cancellation and failure', { timeout: 45000 }, async (t) => {
   const pdf = Buffer.concat([Buffer.from('%PDF-1.7\n%'), Buffer.from([0xe2, 0xe3, 0xcf, 0xd3])])
   const filename = 'verified plan.pdf'
   let requests = 0
@@ -426,10 +426,12 @@ test('PDF export can be canceled, retried and saved from its retained link', { t
     if (path.startsWith(runPath + '/artifacts/')) {
       return route.fulfill({ json: fixture.artifacts.find(({ reference }) => path.endsWith('/' + reference.artifact_id)) })
     }
+    if (path === runPath + '/exports/pptx') {
+      requests += 1
+      return route.fulfill({ status: 409, json: { error: { message: 'Run has no exportable result' } } })
+    }
     if (path !== runPath + '/exports/pdf') return route.fulfill({ status: 404 })
-    const request = ++requests
-    if (request === 1) await delayed
-    if (request === 2) return route.fulfill({ status: 409, json: { error: { message: 'Run has no exportable result' } } })
+    if (++requests === 2) await delayed
     return route.fulfill({ body: pdf, headers: {
       'content-type': 'application/pdf',
       'content-disposition': "attachment; filename*=UTF-8''verified%20plan.pdf",
@@ -449,28 +451,43 @@ test('PDF export can be canceled, retried and saved from its retained link', { t
   const exports = page.getByRole('region', { name: 'Export plan' })
   const pdfButton = exports.getByRole('button', { name: 'PDF', exact: true })
 
-  await Promise.all([page.waitForRequest('**/exports/pdf'), pdfButton.click()])
-  await exports.getByRole('status').getByText(/Preparing PDF/).waitFor()
-  assert.ok(await pdfButton.isDisabled())
-  assert.ok(await exports.getByRole('button', { name: 'PowerPoint' }).isDisabled())
-  await exports.getByRole('button', { name: 'Cancel export' }).click()
-  await exports.getByRole('status').getByText('Export canceled.').waitFor()
-  release()
-  await pdfButton.click()
-  await exports.getByRole('alert').getByText('Could not download PDF. Run has no exportable result').waitFor()
-
   await page.clock.install()
   assert.deepEqual(await download(page, 'PDF', filename), pdf)
   const save = exports.getByRole('link', { name: 'Save ' + filename })
   const url = await save.getAttribute('href')
   assert.match(url, /^blob:/)
   await page.clock.fastForward(2000)
-  assert.equal(await page.evaluate((value) => globalThis.revokedDownloadUrls.includes(value), url), false)
-  const [file] = await Promise.all([page.waitForEvent('download'), save.click()])
-  assert.deepEqual(await savedFile(file, filename), pdf)
+
+  const powerPoint = exports.getByRole('button', { name: 'PowerPoint' })
+  await Promise.all([page.waitForRequest('**/exports/pdf'), pdfButton.click()])
+  await exports.getByRole('status').getByText(/Preparing PDF/).waitFor()
+  assert.ok(await pdfButton.isDisabled())
+  assert.ok(await powerPoint.isDisabled())
+  assert.equal(await save.getAttribute('href'), url)
+  await exports.getByRole('button', { name: 'Cancel export' }).click()
+  await exports.getByRole('status').getByText('Export canceled.').waitFor()
+  release()
+
+  async function savePreviousPdf() {
+    assert.equal(await save.getAttribute('href'), url)
+    const [file] = await Promise.all([page.waitForEvent('download'), save.click()])
+    assert.deepEqual(await savedFile(file, filename), pdf)
+  }
+
+  await savePreviousPdf()
+  await powerPoint.click()
+  await exports.getByRole('alert').getByText('Could not download PowerPoint. Run has no exportable result').waitFor()
+  await savePreviousPdf()
   assert.equal(requests, 3)
+  assert.equal(await page.evaluate((value) => globalThis.revokedDownloadUrls.includes(value), url), false)
+
+  assert.deepEqual(await download(page, 'PDF', filename), pdf)
+  const replacementUrl = await save.getAttribute('href')
+  assert.notEqual(replacementUrl, url)
+  assert.equal(requests, 4)
+  assert.equal(await page.evaluate((value) => globalThis.revokedDownloadUrls.includes(value), url), true)
 
   await page.getByRole('link', { name: 'History', exact: true }).click()
   await page.waitForURL('**/history')
-  assert.equal(await page.evaluate((value) => globalThis.revokedDownloadUrls.includes(value), url), true)
+  assert.equal(await page.evaluate((value) => globalThis.revokedDownloadUrls.includes(value), replacementUrl), true)
 })
