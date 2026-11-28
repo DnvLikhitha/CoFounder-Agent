@@ -22,7 +22,7 @@ from backend.contracts.v1 import (
 from backend.run_worker.auth import Owner, owner
 from backend.safe_logging import SafeRequests
 from backend.run_worker.store import Store, StoreError, TERMINAL, latest_artifacts
-from backend.run_worker.workflow import FAKE_VERSIONS, REVIEWED_VERSION
+from backend.run_worker.workflow import RETIRED_DEMO_VERSIONS, REVIEWED_VERSION
 
 app = FastAPI(title="CoFounder-Agent Run Contract", version="1.0.0")
 app.add_middleware(SafeRequests, private=True)
@@ -145,6 +145,9 @@ async def export(run_id: UUID, format: Literal["pdf", "markdown", "pptx"],
     state = await run_in_threadpool(database.snapshot, user.subject, run_id)
     if state["status"] not in {"succeeded", "partial"}:
         raise StoreError(409, "state_conflict", "Run has no exportable result")
+    version = state["manifest"]["version"]
+    if version in RETIRED_DEMO_VERSIONS:
+        raise StoreError(409, "state_conflict", "Reports are unavailable for retired demo runs. Open the saved artifacts instead.")
     context = ReportData(run_id=str(run_id), problem_raw=state["input"]["problem"],
                          domain=state["input"]["domain"], geography=state["input"]["geography"],
                          created_at=datetime.fromisoformat(state["created_at"]),
@@ -161,29 +164,13 @@ async def export(run_id: UUID, format: Literal["pdf", "markdown", "pptx"],
     missing = [labels[step["step_id"]] for step in state["steps"] if step["status"] in {"skipped", "failed"}]
     degraded = [labels[step["step_id"]] for step in state["steps"] if step["status"] == "partial"]
     status = "Partial results" if state["status"] == "partial" else "Succeeded"
-    version = state["manifest"]["version"]
-    is_demo = await run_in_threadpool(database.is_demo, user.subject, run_id, version)
+    is_demo = await run_in_threadpool(database.is_demo, user.subject, run_id)
     notice = f"Fake-provider demonstration. {status}." if is_demo else f"{status}."
     if missing:
         notice += " Missing sections: " + ", ".join(missing) + "."
     if degraded:
         notice += " Incomplete sections: " + ", ".join(degraded) + "."
 
-    if version in FAKE_VERSIONS:
-        highlights = []
-        if model := context.business_model.get("model"):
-            highlights.append(f"Business model: {model}.")
-        for tier in context.pricing_strategy.get("tiers", []):
-            # Older fake runs used `name`; the report generators expect `tier_name`.
-            tier_name = tier.setdefault("tier_name", tier.get("name", "Tier"))
-            highlights.append(f'{tier_name} pricing: ${tier["price_monthly_usd"]}/month.')
-        if month := context.financial_projections.get("breakeven_month"):
-            highlights.append(f"Break-even month: {month}.")
-        if context.risk_register:
-            highlights.append(f'Risks recorded: {len(context.risk_register["risks"])}.')
-        context.startup_idea = {"startup_name": "Fake workflow result", "tagline": status}
-        context.executive_summary = {"executive_summary": " ".join(highlights)}
-        context.pitch_deck = {"slides": [{"title": "Workflow results", "bullet_points": highlights}]}
     if format == "markdown":
         from backend.export.markdown_writer import generate_markdown
         content, media = (await generate_markdown(context, notice=notice)).encode(), "text/markdown"

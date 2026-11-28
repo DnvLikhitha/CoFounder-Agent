@@ -183,18 +183,14 @@ function Exports({ client, runId, partial }) {
     <section className="panel exports" aria-labelledby="exports-heading">
       <h2 id="exports-heading">Export plan</h2>
       {partial && <p className="muted">Exports contain the available results from this partial run.</p>}
-      {client.supportsExports ? (
-        <>
-          <div className="actions">
-            {Object.entries(exportLabels).map(([format, label]) => (
-              <button key={format} disabled={Boolean(state.format)} onClick={() => download(format)}>{label}</button>
-            ))}
-            {state.format && <button type="button" onClick={cancel}>Cancel export</button>}
-          </div>
-          <p className="muted export-status" role="status">{state.message}</p>
-          {file && <p><a href={file.url} download={file.filename}>Save {file.filename}</a></p>}
-        </>
-      ) : <p className="muted">Downloads are available with the live API.</p>}
+      <div className="actions">
+        {Object.entries(exportLabels).map(([format, label]) => (
+          <button key={format} disabled={Boolean(state.format)} onClick={() => download(format)}>{label}</button>
+        ))}
+        {state.format && <button type="button" onClick={cancel}>Cancel export</button>}
+      </div>
+      <p className="muted export-status" role="status">{state.message}</p>
+      {file && <p><a href={file.url} download={file.filename}>Save {file.filename}</a></p>}
       {state.error && <p className="notice error" role="alert">{state.error}</p>}
     </section>
   )

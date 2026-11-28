@@ -1,12 +1,14 @@
 # Final project verification
 
+This report records the initial LangGraph cleanup. See the [current README](../README.md) for startup commands and the current compatibility policy.
+
 Starting source was `18b58c93ee3fb05ee4fcb6c091ced850393c6db3` on canonical `main`, after PRs #16 through #18. The cleanup branch was based on a clean isolated worktree. The original checkout contained an untracked file and was left intact.
 
 ## Architecture and agent audit
 
 One Vite React app calls one mounted FastAPI v1 API. One worker advances a LangGraph StateGraph. PostgreSQL owns run data, immutable artifact revisions, the event log, claim and budget ledgers, and the graph checkpoints. The run UUID is the checkpoint thread ID. Fence checks guard both application transactions and checkpoint writes. The API and worker retain the same REST and SSE contracts.
 
-The [current compiled dependency graph](../README.md#current-compiled-dependency-graph) comes from the reviewed graph. The [migration report](langgraph-orchestration.md) archives the earlier graph. All agents below register as individual LangGraph nodes through `LIVE_STEPS`. The node hydrates a private, frozen input adapter from committed artifact bodies, runs the registered prompt and research integration through the shared Groq adapter in live mode, validates the output, and transactionally writes the artifact, evaluation, and public events. The graph reducer receives status and references. It holds no provider clients or mutable shared agent context. Fake mode supplies backend fixtures at the same node boundaries.
+The [current compiled dependency graph](../README.md#current-compiled-dependency-graph) comes from the reviewed graph. The [migration report](archive/langgraph-orchestration.md) archives the earlier graph. All agents below register as individual LangGraph nodes through `LIVE_STEPS`. The node hydrates a private, frozen input adapter from committed artifact bodies, runs the registered prompt and research integration through the shared Groq adapter in live mode, validates the output, and transactionally writes the artifact, evaluation, and public events. The graph reducer receives status and references. It holds no provider clients or mutable shared agent context. Fake mode supplies backend fixtures at the same node boundaries.
 
 | Node and agent source | Required committed inputs | Optional inputs | Output model | Research |
 | --- | --- | --- | --- | --- |
@@ -99,7 +101,7 @@ The last step window is taken from PostgreSQL timestamps. The historical Groq co
 
 ## Limits and local startup
 
-The actual Groq rerun was skipped because the required zero-spend account status could not be verified for an authorized key. No actual generation, research quota-consuming calls, or paid evaluation calls were made during this cleanup. The archived real run completed 12 agents and its metrics remain in [the historical report](release-readiness-verification.md). The historical model's rejected response bodies were unavailable. The deterministic latencies and fixture values describe only the local test workload.
+The actual Groq rerun was skipped because the required zero-spend account status could not be verified for an authorized key. No actual generation, research quota-consuming calls, or paid evaluation calls were made during this cleanup. The archived real run completed 12 agents and its metrics remain in [the historical report](archive/release-readiness-verification.md). The historical model's rejected response bodies were unavailable. The deterministic latencies and fixture values describe only the local test workload.
 
 Follow the complete [Windows setup](../README.md#run-locally-on-windows). The entry points are:
 

@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     v1_require_founder_review: bool = False
     v1_require_pricing_review: bool = False
     v1_llm_evaluation: bool = False
+    v1_allow_test_jwt: bool = False
     v1_jwt_secret: str = ""
     v1_jwt_issuer: str = "cofounder-agent"
     v1_jwt_audience: str = "cofounder-api"
@@ -52,6 +53,10 @@ class Settings(BaseSettings):
     @property
     def uses_supabase(self) -> bool:
         return self.production or bool(self.supabase_url)
+
+    @property
+    def uses_test_jwt(self) -> bool:
+        return self.v1_allow_test_jwt and not self.uses_supabase and len(self.v1_jwt_secret) >= 32
 
     @property
     def supabase_issuer(self) -> str:
@@ -96,8 +101,8 @@ class Settings(BaseSettings):
         self.cors_origins_list
         if self.uses_supabase:
             _ = self.supabase_issuer
-        elif len(self.v1_jwt_secret) < 32:
-            raise ValueError("V1_JWT_SECRET must be at least 32 characters for local authentication")
+        elif not self.uses_test_jwt:
+            raise ValueError("Configure Supabase or explicitly enable a local test JWT with a secret of at least 32 characters")
         if not self.database_url:
             raise ValueError("DATABASE_URL is required")
 

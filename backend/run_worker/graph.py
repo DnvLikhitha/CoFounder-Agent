@@ -19,8 +19,9 @@ from backend.run_worker.forecast_validation import approved_prices
 from backend.run_worker.ledger import BudgetExceeded
 from backend.run_worker.provider_call import ClaimCalls
 from backend.run_worker.store import LostClaim
+from backend.run_worker import workflow
 from backend.run_worker.workflow import (
-    GRAPH_VERSIONS, LIVE_VERSION, REVIEWED_VERSION, LIVE_STEPS, WORKFLOWS, InvalidOutput, PartialOutput, ProviderFailure, ProviderTimeout,
+    GRAPH_VERSIONS, REVIEWED_VERSION, LIVE_STEPS, InvalidOutput, PartialOutput, ProviderFailure, ProviderTimeout,
     check_graph, validate_output,
 )
 
@@ -292,11 +293,10 @@ def execute_graph(store, claim, config, invoke_provider, calls, *, lease_seconds
         if frozen != expected:
             raise ValueError("Pinned graph manifest does not match the registered graph")
     else:
-        # Pre-checkpoint runs use their frozen required edges. Only historical live jobs
-        # waited for optional producers; old demos merely consumed already available inputs.
-        historical = {step: tuple(dict.fromkeys(tuple(required) + (
-            WORKFLOWS[version][step].optional if version == LIVE_VERSION else ())))
-            for step, required in frozen.items()}
+        # Pre-checkpoint live runs retain their frozen manifest and optional inputs.
+        specs = workflow.WORKFLOWS[version]
+        historical = {step: tuple(dict.fromkeys((*required, *(dep for dep in specs[step].optional if dep in frozen))))
+                      for step, required in frozen.items()}
     thread_config = {"configurable": {"thread_id": run_id}, "max_concurrency": settings.v1_step_concurrency}
     node = partial(run_agent_node, database=store, claim=claim, invoke_provider=invoke_provider, judge=judge, calls=calls)
     with maintain_lease(store, claim, lease_seconds, heartbeat_mode, calls), \

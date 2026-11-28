@@ -1,5 +1,5 @@
 import contents from './full-agent-artifacts.json' with { type: 'json' }
-import { applyFrame, toFrame } from '../lib/run-state.js'
+import { applyFrame, toFrame } from '../../src/lib/run-state.js'
 
 // This manifest belongs to the fixtures. The run UI consumes the API manifest.
 const waves = [

@@ -68,7 +68,6 @@ button:disabled { opacity: .65; cursor: wait; }
 .site-header nav { display: flex; gap: .3rem; }
 .site-header nav a { color: var(--text-secondary); padding: .35rem .65rem; border-radius: 6px; }
 .site-header nav a[aria-current="page"], .site-header nav a:hover { background: var(--accent-dim); color: var(--accent); }
-.mode { margin-left: auto; color: var(--text-secondary); font-size: .875rem; }
 .page { width: min(100%, 76rem); margin: auto; padding: clamp(1.2rem, 4vw, 3rem) clamp(1rem, 4vw, 1.6rem) 4rem; }
 .narrow { max-width: 52rem; }
 .page-heading, .run-heading { margin-bottom: 1.5rem; }
@@ -87,7 +86,6 @@ label span { color: var(--text-secondary); font-weight: 400; }
 textarea { resize: vertical; }
 .field-hint { display: flex; justify-content: space-between; color: var(--text-secondary); font-size: .875rem; }
 .field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1.3rem 0; }
-.scenario { max-width: 21rem; margin-bottom: 1.2rem; }
 .start-button { width: 100%; padding: .75rem; }
 
 .notice {
@@ -201,6 +199,5 @@ summary { color: var(--accent); cursor: pointer; }
   .field-row { grid-template-columns: 1fr; }
   .revision-comparison { grid-template-columns: 1fr; }
   .site-header-inner { gap: .6rem .9rem; padding-inline: 1rem; }
-  .mode { margin-left: 0; }
   .history-item { flex-wrap: wrap; }
 }

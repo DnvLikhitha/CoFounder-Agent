@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { mockMode } from './lib/index.js'
 import { createSubmissionKeys } from './lib/submission.js'
 
 const domains = ['General', 'SaaS', 'HealthTech', 'EdTech', 'FinTech', 'Marketplace', 'AI/ML', 'Consumer', 'B2B', 'Other']
@@ -31,10 +30,9 @@ export function InputForm({ client }) {
       domain: form.get('domain') || null,
       geography: form.get('geography').trim() || null,
     }
-    const scenario = mockMode ? form.get('scenario') : undefined
     try {
       const { run_id } = await client.startRun(input, {
-        signal: request.signal, scenario, idempotencyKey: keys.get(input, scenario),
+        signal: request.signal, idempotencyKey: keys.get(input),
       })
       if (!request.signal.aborted) {
         keys.reset()
@@ -78,16 +76,6 @@ export function InputForm({ client }) {
             <input className="input-surface" id="geography" name="geography" maxLength={100} placeholder="For example, India" />
           </div>
         </div>
-        {mockMode && (
-          <div className="scenario">
-            <label htmlFor="scenario">Mock scenario</label>
-            <select className="input-surface" name="scenario" id="scenario">
-              <option value="full-succeeded">Full workflow · successful run</option>
-              <option value="full-partial">Full workflow · pricing failure</option>
-            </select>
-            <p className="field-help muted">Mock runs display sample outputs.</p>
-          </div>
-        )}
         {state.error && <p className="notice error" role="alert">{state.error}</p>}
         {state.uncertain && <p className="muted">Retry the same input to recover the existing submission if it was accepted.</p>}
         <div className="actions submission-actions">

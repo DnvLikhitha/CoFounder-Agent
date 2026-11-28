@@ -3,8 +3,8 @@
 export function createSubmissionKeys(makeKey = () => crypto.randomUUID()) {
   let previous
   return {
-    get(input, scenario) {
-      const payload = JSON.stringify([input.problem, input.domain, input.geography, scenario])
+    get(input) {
+      const payload = JSON.stringify([input.problem, input.domain, input.geography])
       if (previous?.payload !== payload) previous = { payload, key: makeKey() }
       return previous.key
     },

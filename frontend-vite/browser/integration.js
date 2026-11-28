@@ -6,7 +6,7 @@ import { chromium } from 'playwright'
 import { createServer } from 'vite'
 import revisedArtifacts from '../../shared/contracts/fixtures/revised/artifacts.json' with { type: 'json' }
 import revisedStart from '../../shared/contracts/fixtures/revised/snapshot.json' with { type: 'json' }
-import { fullAgentFixtures } from '../src/fixtures/full-agent-runs.js'
+import { fullAgentFixtures } from '../test/fixtures/full-agent-runs.js'
 import { applyFrame, toFrame } from '../src/lib/run-state.js'
 
 const idp = 'https://browser-test.supabase.co'

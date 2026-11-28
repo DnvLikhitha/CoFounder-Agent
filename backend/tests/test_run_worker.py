@@ -42,11 +42,11 @@ from backend.run_worker.live_agents import PROMPT_BUNDLES
 from backend.run_worker.provider_call import call_with_deadline
 from backend.run_worker import workflow
 from backend.run_worker.store import LostClaim, Store, StoreError
-from backend.run_worker.worker import execute_claim
+from backend.run_worker.worker import execute_claim as worker_execute_claim
+from backend.tests.business_fixture import BUSINESS_FIXTURE_STEPS, BUSINESS_FIXTURE_VERSION, Pricing, business_response
 from backend.run_worker.workflow import (
-    FAKE_VERSIONS, GRAPH_VERSION, REVIEWED_VERSION, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput,
+    GRAPH_VERSION, REVIEWED_VERSION, LIVE_STEPS, LIVE_VERSION, InvalidOutput, PartialOutput,
     ProviderFailure, ProviderTimeout,
-    fake_provider, validate_output,
 )
 from backend.tests.test_live_agents import FIXTURE, FixtureGroq, fixture_provider, hang_during_pricing, wait_in_sibling_steps
 
@@ -57,6 +57,13 @@ def inline_call(provider, step_id, body, upstream, timeout, calls):
     return provider(step_id, body, upstream)
 
 
+def execute_claim(database, claim, provider=None, *args, **kwargs):
+    """Supply the test-only provider for focused storage graphs."""
+    if provider is None and database.graph_configuration(*claim)["manifest"]["version"] == BUSINESS_FIXTURE_VERSION:
+        provider = business_response
+    return worker_execute_claim(database, claim, provider, *args, **kwargs)
+
+
 class PricingValidationTests(unittest.TestCase):
     def test_json_prices_accept_finite_numbers(self):
         for value, accepted in [(10, True), (10.25, True), (True, False), ("10", False),
@@ -64,15 +71,18 @@ class PricingValidationTests(unittest.TestCase):
             with self.subTest(value=value):
                 content = {"tiers": [{"tier_name": "Starter", "price_monthly_usd": value}]}
                 if accepted:
-                    validate_output("fake-business-v2", "pricing_strategy", content)
+                    Pricing.model_validate(content)
                 else:
-                    with self.assertRaises(InvalidOutput):
-                        validate_output("fake-business-v2", "pricing_strategy", content)
+                    with self.assertRaises(ValueError):
+                        Pricing.model_validate(content)
 
 
 class WorkerIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.enterClassContext(patch.object(workflow, "WORKFLOWS",
+                                          {**workflow.WORKFLOWS, BUSINESS_FIXTURE_VERSION: BUSINESS_FIXTURE_STEPS}))
+        cls.enterClassContext(patch.object(settings, "v1_allow_test_jwt", True))
         cls.base_dsn = os.environ["TEST_DATABASE_URL"]
         cls.schema = "worker_test_" + uuid4().hex
         with psycopg.connect(cls.base_dsn) as connection:
@@ -116,8 +126,8 @@ class WorkerIntegrationTests(unittest.TestCase):
         payload.update(claims)
         return {"Authorization": "Bearer " + jwt.encode(payload, self.secret, algorithm="HS256")}
 
-    def submit(self, subject="alice", key="submission-1"):
-        return self.database.submit(subject, key, self.body)
+    def submit(self, subject="alice", key="submission-1", version=BUSINESS_FIXTURE_VERSION):
+        return self.database.submit(subject, key, self.body, version=version)
 
     def expire(self, run_id):
         with self.database.connect() as connection:
@@ -590,7 +600,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         execute_claim(self.database, self.database.claim())
         self.assertEqual(self.submit(), snapshots[0])
         with self.assertRaises(StoreError) as failure:
-            self.database.submit("alice", "submission-1", {**self.body, "domain": "changed"})
+            self.database.submit("alice", "submission-1", {**self.body, "domain": "changed"}, version=BUSINESS_FIXTURE_VERSION)
         self.assertEqual(failure.exception.status, 409)
         self.assertNotEqual(self.submit("bob")["run_id"], snapshots[0]["run_id"])
 
@@ -840,7 +850,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(len(active), 1)
         run_id, old_token = active[0]
         inputs = self.database.begin_step(run_id, old_token, "business_model")
-        content = fake_provider("business_model", *inputs)
+        content = business_response("business_model", *inputs)
         self.database.complete_step(run_id, old_token, "business_model", content)
         self.database.begin_step(run_id, old_token, "pricing_strategy")
         self.expire(run_id)
@@ -855,7 +865,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         called = []
         def provider(step_id, body, upstream):
             called.append(step_id)
-            return fake_provider(step_id, body, upstream)
+            return business_response(step_id, body, upstream)
         execute_claim(restarted, new_claim, provider)
         self.assertNotIn("business_model", called)
         final = restarted.snapshot("alice", run_id)
@@ -868,7 +878,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         claim = self.database.claim()
         inputs = self.database.begin_step(*claim, "business_model")
         before = self.database.snapshot("alice", run_id)
-        content = fake_provider("business_model", *inputs)
+        content = business_response("business_model", *inputs)
         original_emit = self.database._emit
         def interrupt(connection, snapshot, kind, data, timestamp):
             if kind == "step.updated":
@@ -901,7 +911,7 @@ class WorkerIntegrationTests(unittest.TestCase):
                 started.set()
                 if not release.wait(15):
                     raise RuntimeError("Test provider timed out")
-            return fake_provider(step_id, body, upstream)
+            return business_response(step_id, body, upstream)
 
         with ThreadPoolExecutor(max_workers=1) as pool:
             worker = pool.submit(execute_claim, self.database, claim, slow_provider, lease_seconds)
@@ -945,7 +955,7 @@ class WorkerIntegrationTests(unittest.TestCase):
             connection.execute("UPDATE v1_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE run_id=%s", (run_id,))
         with patch.object(self.database, "_emit", side_effect=expire_during_write):
             with self.assertRaises(LostClaim):
-                self.database.complete_step(*claim, "business_model", fake_provider("business_model", *inputs))
+                self.database.complete_step(*claim, "business_model", business_response("business_model", *inputs))
         self.assertEqual(self.database.snapshot("alice", run_id), before)
         with self.assertRaises(StoreError):
             self.database.artifact("alice", run_id, "business_model")
@@ -987,7 +997,7 @@ class WorkerIntegrationTests(unittest.TestCase):
             with self.assertRaises(StoreError):
                 self.database.begin_step(*claim, step)
         inputs = self.database.begin_step(*claim, "business_model")
-        business = fake_provider("business_model", *inputs)
+        business = business_response("business_model", *inputs)
         self.database.complete_step(*claim, "business_model", business)
         pricing_inputs = Store(self.dsn).begin_step(*claim, "pricing_strategy")
         self.assertEqual(pricing_inputs[1], {"business_model": business})
@@ -995,7 +1005,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         with self.assertRaises(StoreError):
             self.database.begin_step(*claim, "financial_projections")
         self.assertEqual(self.database.snapshot("alice", run_id), before)
-        pricing = fake_provider("pricing_strategy", *pricing_inputs)
+        pricing = business_response("pricing_strategy", *pricing_inputs)
         self.database.complete_step(*claim, "pricing_strategy", pricing)
         finance_inputs = Store(self.dsn).begin_step(*claim, "financial_projections")
         self.assertEqual(finance_inputs[1], {"business_model": business, "pricing_strategy": pricing})
@@ -1053,9 +1063,9 @@ class WorkerIntegrationTests(unittest.TestCase):
         run_id = self.submit()["run_id"]
         claim = self.database.claim()
         inputs = self.database.begin_step(*claim, "business_model")
-        self.database.complete_step(*claim, "business_model", fake_provider("business_model", *inputs))
+        self.database.complete_step(*claim, "business_model", business_response("business_model", *inputs))
         inputs = self.database.begin_step(*claim, "pricing_strategy")
-        pricing = fake_provider("pricing_strategy", *inputs)
+        pricing = business_response("pricing_strategy", *inputs)
         publishing, release = Event(), Event()
         publisher = Store(self.dsn)
         original_emit = publisher._emit
@@ -1096,7 +1106,7 @@ class WorkerIntegrationTests(unittest.TestCase):
                 committed = Store(self.dsn).artifact("alice", initial["run_id"], dependency)
                 self.assertEqual(content, committed["content"])
             observed.append(step_id)
-            return fake_provider(step_id, body, upstream)
+            return business_response(step_id, body, upstream)
         execute_claim(self.database, self.database.claim(), provider)
         self.assertLess(observed.index("pricing_strategy"), observed.index("financial_projections"))
 
@@ -1113,7 +1123,7 @@ class WorkerIntegrationTests(unittest.TestCase):
                 self.assertEqual(set(upstream), {"business_model"})
             if step_id == "pricing_strategy":
                 return {"tiers": [{"tier_name": "Invalid", "price_monthly_usd": -1}]}
-            return fake_provider(step_id, body, upstream)
+            return business_response(step_id, body, upstream)
 
         execute_claim(self.database, self.database.claim(), provider)
         run_id = initial["run_id"]
@@ -1141,7 +1151,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         for step_id, changes in invalid.items():
             with self.subTest(step_id=step_id):
                 inputs = self.database.begin_step(*claim, step_id)
-                output = fake_provider(step_id, *inputs)
+                output = business_response(step_id, *inputs)
                 before = self.database.snapshot("alice", run_id)
                 with self.assertRaises(InvalidOutput):
                     self.database.complete_step(*claim, step_id, {**output, **changes})
@@ -1151,21 +1161,44 @@ class WorkerIntegrationTests(unittest.TestCase):
                     self.database.artifact("alice", run_id, step_id)
                 self.database.complete_step(*claim, step_id, output)
 
-    def test_preexisting_v1_manifest_can_complete(self):
-        initial = self.submit()
-        initial["manifest"]["version"] = "fake-business-v1"
-        with self.database.connect() as connection:
-            connection.execute("UPDATE v1_runs SET initial_snapshot=%s, snapshot=%s WHERE run_id=%s",
-                               (Jsonb(initial), Jsonb(initial), initial["run_id"]))
-        claim = self.database.claim()
-        self.database.begin_step(*claim, "business_model")
-        legacy_content = {"legacy_model": "subscription"}
-        self.database.complete_step(*claim, "business_model", legacy_content)
-        execute_claim(self.database, claim)
-        final = self.database.snapshot("alice", initial["run_id"])
-        self.assertEqual(final["manifest"], initial["manifest"])
-        self.assertEqual(final["status"], "succeeded")
-        self.assertEqual(replay(initial, self.database.events("alice", initial["run_id"], 0)), final)
+    @patch("backend.run_worker.worker.call_with_deadline", inline_call)
+    def test_retired_demo_records_remain_readable_and_pending_records_require_drain(self):
+        for retired in workflow.RETIRED_DEMO_VERSIONS:
+            with self.subTest(version=retired):
+                initial = self.submit(key=retired)
+                run_id = initial["run_id"]
+                execute_claim(self.database, self.database.claim())
+                final = self.database.snapshot("alice", run_id)
+                initial["manifest"]["version"] = final["manifest"]["version"] = retired
+                path = f"/runs/{run_id}"
+                with self.database.connect() as connection:
+                    connection.execute("UPDATE v1_runs SET initial_snapshot=%s, snapshot=%s WHERE run_id=%s",
+                                       (Jsonb(initial), Jsonb(final), run_id))
+
+                self.database.migrate()
+                self.assertIsNone(self.database.claim())
+                response = self.client.get(path, headers=self.headers())
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json(), RunSnapshot.model_validate(final).model_dump(mode="json"))
+                self.assertEqual(self.client.get(path, headers=self.headers("bob")).status_code, 404)
+                self.assertTrue(any(row["run_id"] == run_id for row in
+                                    self.client.get("/runs", headers=self.headers()).json()["runs"]))
+                self.assertEqual(replay(initial, self.database.events("alice", run_id, 0)), final)
+                stream = self.client.get(path + "/events", headers=self.headers())
+                self.assertEqual(stream.status_code, 200)
+                self.assertEqual([int(line[4:]) for line in stream.text.splitlines() if line.startswith("id: ")],
+                                 list(range(1, final["last_event_id"] + 1)))
+                self.assertEqual(self.client.get(path + "/artifacts/business_model", headers=self.headers()).status_code, 200)
+                self.assertEqual(self.client.get(path + "/exports/pdf", headers=self.headers()).status_code, 409)
+
+                with self.database.connect() as connection:
+                    connection.execute("UPDATE v1_runs SET snapshot=%s WHERE run_id=%s", (Jsonb(initial), run_id))
+                with self.assertRaisesRegex(StoreError, "Finish pending four-agent"):
+                    self.database.migrate()
+                self.assertIsNone(self.database.claim())
+                self.assertEqual(self.database.snapshot("alice", run_id), initial)
+                with self.database.connect() as connection:
+                    connection.execute("UPDATE v1_runs SET snapshot=%s WHERE run_id=%s", (Jsonb(final), run_id))
 
     @patch("backend.run_worker.worker.call_with_deadline", inline_call)
     def test_partial_pricing_survives_reclaim_and_blocks_required_consumer(self):
@@ -1174,13 +1207,13 @@ class WorkerIntegrationTests(unittest.TestCase):
         run_id, _ = claim
         for step_id in ["business_model", "pricing_strategy"]:
             inputs = self.database.begin_step(*claim, step_id)
-            output = fake_provider(step_id, *inputs)
+            output = business_response(step_id, *inputs)
             self.database.complete_step(*claim, step_id, output, partial=step_id == "pricing_strategy")
         self.expire(run_id)
 
         def remaining_provider(step_id, body, upstream):
             self.assertEqual(step_id, "risk_register")
-            return PartialOutput(fake_provider(step_id, body, upstream))
+            return PartialOutput(business_response(step_id, body, upstream))
 
         execute_claim(Store(self.dsn), self.database.claim(), remaining_provider)
         final = self.database.snapshot("alice", run_id)
@@ -1215,19 +1248,18 @@ class WorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(upstream, {"startup_idea": {"source": "startup_idea"}})
         self.expire(run_id)
         # Simulate a deployment changing both the allowed inputs and the output model.
-        version = "fake-business-v3"
-        newer = dict(workflow.WORKFLOWS["fake-business-v2"])
+        version = "test-upgraded-fixture"
+        newer = dict(BUSINESS_FIXTURE_STEPS)
         newer["business_model"] = replace(newer["business_model"], optional=("executive_summary",),
-                                           output=workflow.Pricing)
-        with patch.object(workflow, "WORKFLOWS", {**workflow.WORKFLOWS, version: newer}), \
-             patch.object(workflow, "CURRENT_VERSION", version):
-            fresh = self.submit(key="after-upgrade")
+                                           output=Pricing)
+        with patch.object(workflow, "WORKFLOWS", {**workflow.WORKFLOWS, version: newer}):
+            fresh = self.submit(key="after-upgrade", version=version)
             self.assertEqual(fresh["manifest"]["version"], version)
             reclaimed = self.database.claim()
             self.assertEqual(reclaimed[0], run_id)
             body, after = self.database.begin_step(*reclaimed, "business_model")
             self.assertEqual(after, upstream)
-            content = fake_provider("business_model", body, after)
+            content = business_response("business_model", body, after)
             self.database.complete_step(*reclaimed, "business_model", content)
             fresh_claim = self.database.claim()
             self.database.begin_step(*fresh_claim, "business_model")
@@ -1235,10 +1267,8 @@ class WorkerIntegrationTests(unittest.TestCase):
                 self.database.complete_step(*fresh_claim, "business_model", content)
 
     def test_worker_leaves_newer_manifest_for_a_compatible_worker(self):
-        with patch.object(workflow, "CURRENT_VERSION", "future"), patch.object(
-            workflow, "WORKFLOWS", {**workflow.WORKFLOWS, "future": workflow.WORKFLOWS["fake-business-v2"]}
-        ):
-            future = self.submit()
+        with patch.object(workflow, "WORKFLOWS", {**workflow.WORKFLOWS, "future": BUSINESS_FIXTURE_STEPS}):
+            future = self.submit(version="future")
         supported = self.submit(key="supported")
         self.assertEqual(self.database.claim()[0], supported["run_id"])
         self.assertIsNone(self.database.claim())
@@ -1294,6 +1324,19 @@ class WorkerIntegrationTests(unittest.TestCase):
             self.assertIn("id: 1\nevent: run.updated", resumed.text)
         finally:
             app.dependency_overrides[store] = lambda: Store(self.dsn)
+
+    def test_local_test_jwt_requires_opt_in_and_yields_to_supabase(self):
+        run_id = self.submit()["run_id"]
+        path = f"/runs/{run_id}"
+        token = self.headers()
+        with patch.object(settings, "v1_allow_test_jwt", False):
+            self.assertEqual(self.client.get(path, headers=token).status_code, 503)
+        for options in ({"supabase_url": "http://127.0.0.1:54321"},
+                        {"environment": "production", "supabase_url": "https://identity.example.test"}):
+            with patch.multiple(settings, **options):
+                self.assertFalse(settings.uses_test_jwt)
+                self.assertEqual(self.client.get(path, headers=token).status_code, 401)
+        self.assertEqual(self.client.get(path, headers=token).status_code, 200)
 
     def test_owner_isolation_and_authentication(self):
         run_id = self.submit()["run_id"]
@@ -1351,12 +1394,12 @@ class WorkerIntegrationTests(unittest.TestCase):
         from io import BytesIO
         from pptx import Presentation
 
-        for failing_step, expected in [("pricing_strategy", "partial"), ("business_model", "failed")]:
-            initial = self.submit(key=failing_step)
+        for failing_step, expected in [("pricing_strategy", "partial"), ("problem_refined", "failed")]:
+            initial = self.database.submit("alice", failing_step, self.body, graph_mode="fake")
             def provider(step, body, upstream):
                 if step == failing_step:
                     raise ProviderFailure()
-                return fake_provider(step, body, upstream)
+                return demo_provider(step, body, upstream)
             execute_claim(self.database, self.database.claim(), provider)
             final = self.database.snapshot("alice", initial["run_id"])
             self.assertEqual(final["status"], expected)
@@ -1366,19 +1409,19 @@ class WorkerIntegrationTests(unittest.TestCase):
             if expected == "partial":
                 self.assertIn("Partial results", response.text)
                 self.assertIn("Missing sections", response.text)
-                self.assertIn("Business model: subscription", response.text)
+                self.assertIn("Campus Bridge", response.text)
                 deck = self.client.get(f'/runs/{initial["run_id"]}/exports/pptx', headers=self.headers())
                 presentation = Presentation(BytesIO(deck.content))
                 slide_text = "\n".join(shape.text for slide in presentation.slides
                                        for shape in slide.shapes if shape.has_text_frame)
                 self.assertIn("Partial results", slide_text)
                 self.assertIn("Missing sections: Pricing Strategy", slide_text)
-                self.assertIn("Business model: subscription", slide_text)
+                self.assertEqual(len(presentation.slides), 1)
 
     def test_exports_and_legacy_routes_disabled(self):
         from reportlab import rl_config
 
-        run_id = self.submit()["run_id"]
+        run_id = self.database.submit("alice", None, self.body, graph_mode="fake")["run_id"]
         self.assertEqual(self.client.get(f"/runs/{run_id}/exports/pdf", headers=self.headers()).status_code, 409)
         execute_claim(self.database, self.database.claim())
         for format, prefix in [("markdown", b"#"), ("pdf", b"%PDF"), ("pptx", b"PK")]:
@@ -1388,8 +1431,8 @@ class WorkerIntegrationTests(unittest.TestCase):
             self.assertTrue(response.content.startswith(prefix))
             self.assertIn("attachment", response.headers["content-disposition"])
             if format == "pdf":
-                self.assertIn(b"Slide 1: Workflow results", response.content)
-                self.assertIn(b"Business model: subscription.", response.content)
+                self.assertIn(b"Slide 1:", response.content)
+                self.assertIn(b"Campus Bridge", response.content)
         from backend.main import app as main_app
         client = TestClient(main_app)
         legacy = [("POST", "/api/run"), ("GET", "/api/runs"), ("GET", f"/api/run/{run_id}"),
@@ -1471,7 +1514,7 @@ class WorkerIntegrationTests(unittest.TestCase):
         run_id = initial["run_id"]
         self.assertEqual(initial["manifest"]["version"], REVIEWED_VERSION)
         self.assertEqual([step["step_id"] for step in initial["manifest"]["steps"]], list(LIVE_STEPS))
-        self.assertIsNone(self.database.claim(versions=FAKE_VERSIONS))
+        self.assertIsNone(self.database.claim(versions=(BUSINESS_FIXTURE_VERSION,)))
         independent_research = Barrier(2)
         seen = {}
 
